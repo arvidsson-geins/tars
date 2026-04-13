@@ -15,18 +15,37 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 # --- Resolve layer paths from systemd if not in environment ---
-# The service unit is the single source of truth for TARS_OTHS and TARS_OVERLAY.
-# This fallback means manual deploys (sudo -u tars scripts/sync.sh) work without
-# maintaining a separate shell profile export.
-if [ -z "${TARS_OTHS:-}" ]; then
-    TARS_OTHS=$(systemctl show tars.service -p Environment --value 2>/dev/null \
-        | tr ' ' '\n' | grep -oP '^TARS_OTHS=\K.*' || true)
-    [ -n "$TARS_OTHS" ] && echo "[sync] TARS_OTHS resolved from systemd unit"
-fi
-if [ -z "${TARS_OVERLAY:-}" ]; then
-    TARS_OVERLAY=$(systemctl show tars.service -p Environment --value 2>/dev/null \
-        | tr ' ' '\n' | grep -oP '^TARS_OVERLAY=\K.*' || true)
-    [ -n "$TARS_OVERLAY" ] && echo "[sync] TARS_OVERLAY resolved from systemd unit"
+# Find the service unit whose WorkingDirectory matches this repo. On a
+# multi-install box (e.g. tars.service + tars-tutor.service) each instance
+# has its own unit pointing at a different core dir.
+_resolve_service_unit() {
+    for unit in $(systemctl list-units --type=service --state=loaded --no-legend 2>/dev/null \
+            | awk '/tars/{print $1}'); do
+        local wd env
+        wd=$(systemctl show "$unit" -p WorkingDirectory --value 2>/dev/null || true)
+        [ "$wd" != "$REPO_ROOT" ] && continue
+        env=$(systemctl show "$unit" -p Environment --value 2>/dev/null || true)
+        # Only match the main agent service — must have both layer paths
+        echo "$env" | grep -qP 'TARS_OTHS=' || continue
+        echo "$env" | grep -qP 'TARS_OVERLAY=' || continue
+        echo "$unit"
+        return
+    done
+}
+
+if [ -z "${TARS_OTHS:-}" ] || [ -z "${TARS_OVERLAY:-}" ]; then
+    _UNIT=$(_resolve_service_unit)
+    if [ -n "${_UNIT:-}" ]; then
+        _ENV=$(systemctl show "$_UNIT" -p Environment --value 2>/dev/null || true)
+        if [ -z "${TARS_OTHS:-}" ]; then
+            TARS_OTHS=$(echo "$_ENV" | tr ' ' '\n' | grep -oP '^TARS_OTHS=\K.*' || true)
+            [ -n "$TARS_OTHS" ] && echo "[sync] TARS_OTHS resolved from $_UNIT"
+        fi
+        if [ -z "${TARS_OVERLAY:-}" ]; then
+            TARS_OVERLAY=$(echo "$_ENV" | tr ' ' '\n' | grep -oP '^TARS_OVERLAY=\K.*' || true)
+            [ -n "$TARS_OVERLAY" ] && echo "[sync] TARS_OVERLAY resolved from $_UNIT"
+        fi
+    fi
 fi
 
 # --- Layer 1: Core ---
