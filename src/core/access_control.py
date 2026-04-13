@@ -51,7 +51,7 @@ _AGENT_MESSAGE_RULES: dict[str, set[str]] = {
 
 
 def _load_team() -> dict:
-    """Load team.json and build discord_id → member lookup."""
+    """Load team.json and build user_id → member lookup (Discord IDs and member IDs)."""
     try:
         data = json.loads(TEAM_FILE.read_text())
     except (FileNotFoundError, json.JSONDecodeError):
@@ -59,24 +59,28 @@ def _load_team() -> dict:
 
     lookup = {}
     for human in data.get("humans", []):
+        entry = {
+            "id": human["id"],
+            "name": human.get("name", human["id"]),
+            "type": "human",
+            "access": human.get("access", "staff"),
+        }
         discord_id = (human.get("contact") or {}).get("discord")
         if discord_id:
-            lookup[discord_id] = {
-                "id": human["id"],
-                "name": human.get("name", human["id"]),
-                "type": "human",
-                "access": human.get("access", "staff"),
-            }
+            lookup[discord_id] = entry
+        lookup[human["id"]] = entry
     for agent in data.get("agents", []):
+        entry = {
+            "id": agent["id"],
+            "name": agent.get("name", agent["id"]),
+            "type": "agent",
+            "access": "agent",
+            "agent_tier": agent.get("agent_tier", "assistant"),
+        }
         discord_id = agent.get("discord")
         if discord_id:
-            lookup[discord_id] = {
-                "id": agent["id"],
-                "name": agent.get("name", agent["id"]),
-                "type": "agent",
-                "access": "agent",
-                "agent_tier": agent.get("agent_tier", "assistant"),
-            }
+            lookup[discord_id] = entry
+        lookup[agent["id"]] = entry
     return lookup
 
 
