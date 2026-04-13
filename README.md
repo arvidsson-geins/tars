@@ -345,13 +345,16 @@ DEFCON STATUS: LOCKED DOWN
 
 ## MIGRATING FROM OPENCLAW
 
-See [MIGRATION.md](MIGRATION.md) for the full migration guide. T.A.R.S replaces the OpenClaw gateway — same agents, same memories, same channels, zero data migration.
+Coming from OpenClaw? T.A.R.S replaces the entire stack — gateway, auth proxy, Docker sandboxes, plugins — with one Python process. Same agents, same channels, 10-minute migration.
 
 ```bash
-# Quick version
+# Stop OpenClaw, install T.A.R.S, run setup wizard
 systemctl stop openclaw-gateway.service
-uv run python -m src.main
+git clone https://github.com/TARS-OTHS/tars.git /opt/tars
+cd /opt/tars && uv run python setup.py
 ```
+
+See [MIGRATION.md](MIGRATION.md) for the full step-by-step guide.
 
 ## DOCUMENTATION INDEX
 
