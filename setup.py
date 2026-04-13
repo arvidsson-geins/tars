@@ -33,6 +33,7 @@ except ImportError:
     print("T.A.R.S modules not found. Run: uv sync")
     sys.exit(1)
 
+
 # --- Formatting ---
 
 BOLD = "\033[1m"
@@ -71,6 +72,17 @@ def err(text: str):
 
 def info(text: str):
     print(f"  {DIM}{text}{RESET}")
+
+
+def cc_allow_for_tier(tier: str) -> list[str]:
+    """Derive Claude Code settings.json allow list from agent tier."""
+    base = ["Read(*)", "Glob(*)", "Grep(*)", "mcp__tars-tools__*"]
+    if tier == "privileged":
+        return ["Bash(*)", "Read(*)", "Glob(*)", "Grep(*)",
+                "WebSearch(*)", "WebFetch(*)", "mcp__tars-tools__*"]
+    if tier == "coordinator":
+        return [*base, "Bash(uv run python:*)"]
+    return base
 
 
 def ask(prompt: str, default: str = "") -> str:
@@ -811,12 +823,10 @@ The team roster is at `config/team.json`. User context is injected before each m
     # .claude/settings.json
     claude_dir = agent_dir / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
+    allow_list = cc_allow_for_tier("coordinator")
     settings = {
         "permissions": {
-            "allow": [
-                "mcp__tars-tools__*",
-                "Bash(uv run python:*)",
-            ],
+            "allow": list(allow_list),
             "deny": [],
         },
         "env": {
@@ -954,17 +964,14 @@ def step_ops_instance(state: dict):
         mcp_path.write_text(json.dumps(mcp_json, indent=2) + "\n")
         ok(f"Created {_display(mcp_path)}")
 
-    # .claude/settings.json — ops agents get full access
+    # .claude/settings.json — ops agents get privileged access
     claude_dir = agent_dir / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
     settings_path = claude_dir / "settings.json"
     if not settings_path.exists():
         settings = {
             "permissions": {
-                "allow": [
-                    "Bash(*)", "Read(*)", "Glob(*)", "Grep(*)",
-                    "WebSearch(*)", "WebFetch(*)", "mcp__tars-tools__*",
-                ],
+                "allow": cc_allow_for_tier("privileged"),
                 "deny": [],
             },
             "env": {
@@ -1248,6 +1255,17 @@ def _add_agent(state: dict):
     model = ask_choice("Model", ["sonnet", "opus"], default="sonnet")
     bot_account = ask("Bot account name (from existing bots)", state.get("bot_name", "main"))
 
+    # Tier selection drives permissions
+    print()
+    info("Tier determines default permissions:")
+    info("  privileged — full file/shell access (ops/dev agents)")
+    info("  coordinator — read builtins + restricted shell + MCP tools")
+    info("  assistant — read builtins + MCP tools only")
+    tier = ask_choice("Tier", ["privileged", "coordinator", "assistant"], default="assistant")
+
+    privileged = tier == "privileged"
+    disallow = [] if privileged else ["Edit", "Write", "Bash", "MultiEdit"]
+
     # Load current agents.yaml and add
     agents_path = overlay / "config" / "agents.yaml"
     with open(agents_path) as f:
@@ -1258,16 +1276,21 @@ def _add_agent(state: dict):
     # Routing
     routing = _ask_routing(bot_account)
 
-    agents_cfg.setdefault("agents", {})[agent_name] = {
+    agent_entry = {
         "display_name": display_name,
         "description": description,
         "project_dir": str(agent_dir),
         "llm": {"provider": "claude_code", "model": model},
         "tools": "all",
         "skills": "all",
-        "disallow_builtins": ["Edit", "Write", "Bash", "MultiEdit"],
         "routing": routing,
     }
+    if disallow:
+        agent_entry["disallow_builtins"] = disallow
+    if privileged:
+        agent_entry["privileged"] = True
+
+    agents_cfg.setdefault("agents", {})[agent_name] = agent_entry
 
     agents_path.write_text(yaml.dump(agents_cfg, default_flow_style=False, sort_keys=False))
 
@@ -1337,7 +1360,8 @@ Use your MCP tools for memory — do NOT use curl or HTTP calls.
 
     claude_dir = agent_dir / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
-    settings = {"permissions": {"allow": ["mcp__tars-tools__*"], "deny": []}}
+    allow_list = cc_allow_for_tier(tier)
+    settings = {"permissions": {"allow": list(allow_list), "deny": []}}
     settings_path = claude_dir / "settings.json"
     if not settings_path.exists():
         settings_path.write_text(json.dumps(settings, indent=2) + "\n")

@@ -77,6 +77,59 @@ def info(text: str):
     print(f"  {DIM}{text}{RESET}")
 
 
+def cc_allow_for_tier(tier: str) -> list[str]:
+    """Derive Claude Code settings.json allow list from agent tier."""
+    base = ["Read(*)", "Glob(*)", "Grep(*)", "mcp__tars-tools__*"]
+    if tier == "privileged":
+        return ["Bash(*)", "Read(*)", "Glob(*)", "Grep(*)",
+                "WebSearch(*)", "WebFetch(*)", "mcp__tars-tools__*"]
+    if tier == "coordinator":
+        return [*base, "Bash(uv run python:*)"]
+    return base
+
+
+ALL_PERMISSIONS = [
+    "Read(*)",
+    "Glob(*)",
+    "Grep(*)",
+    "Edit(*)",
+    "Write(*)",
+    "Bash(*)",
+    "Bash(uv run python:*)",
+    "WebSearch(*)",
+    "WebFetch(*)",
+    "mcp__tars-tools__*",
+]
+
+
+def _permission_checklist(current: list[str]) -> list[str]:
+    """Interactive toggle checklist for permissions. Returns updated list."""
+    enabled = set(current)
+
+    while True:
+        print()
+        for i, perm in enumerate(ALL_PERMISSIONS, 1):
+            check = f"{GREEN}✓{RESET}" if perm in enabled else f"{RED}✗{RESET}"
+            print(f"    {i:>2}) {check} {perm}")
+        print()
+
+        choice = ask("Toggle (1-10), d) done", "d").lower()
+        if choice == "d":
+            break
+
+        try:
+            idx = int(choice) - 1
+            perm = ALL_PERMISSIONS[idx]
+            if perm in enabled:
+                enabled.discard(perm)
+            else:
+                enabled.add(perm)
+        except (ValueError, IndexError):
+            err("Invalid choice")
+
+    return [p for p in ALL_PERMISSIONS if p in enabled]
+
+
 def show(key: str, value, indent: int = 2):
     pad = " " * indent
     if isinstance(value, list):
@@ -854,16 +907,17 @@ The team roster is at `config/team.json`. User context is injected before each m
         mcp_path.write_text(json.dumps(mcp_json, indent=2) + "\n")
         ok(f"Created {agent_dir.relative_to(PROJECT_ROOT)}/.mcp.json")
 
-    # .claude/settings.json
+    # .claude/settings.json — tier drives default permissions
     claude_dir = agent_dir / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
     settings_path = claude_dir / "settings.json"
     if settings_path.exists():
         warn(f".claude/settings.json already exists — skipping (won't overwrite)")
     else:
+        allow_list = cc_allow_for_tier(tier)
         settings = {
             "permissions": {
-                "allow": ["mcp__tars-tools__*"],
+                "allow": list(allow_list),
                 "deny": [],
             }
         }
@@ -1098,7 +1152,7 @@ def create_ops_instance():
     if settings_path.exists():
         warn(".claude/settings.json already exists — skipping (won't overwrite)")
     else:
-        settings = {"permissions": {"allow": ["mcp__tars-tools__*"], "deny": []}}
+        settings = {"permissions": {"allow": cc_allow_for_tier("privileged"), "deny": []}}
         settings_path.write_text(json.dumps(settings, indent=2) + "\n")
         ok(f"Created agents/{agent_name}/.claude/settings.json")
 
@@ -1307,6 +1361,191 @@ def manage_timers():
 
 
 # ==========================================================================
+# Tier Permissions
+# ==========================================================================
+
+
+def _load_team_json() -> dict:
+    """Load team.json from config dir."""
+    path = CONFIG_DIR / "team.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text()) or {}
+
+
+def _agent_tier(agent_name: str, agents_cfg: dict, team: dict) -> str:
+    """Resolve agent tier from team.json, falling back to agents.yaml heuristics."""
+    for entry in team.get("agents", []):
+        if entry.get("id") == agent_name:
+            return entry.get("agent_tier", "assistant")
+    # Fallback: infer from agents.yaml
+    agent_cfg = agents_cfg.get("agents", {}).get(agent_name, {})
+    if agent_cfg.get("privileged"):
+        return "privileged"
+    if not agent_cfg.get("disallow_builtins"):
+        return "privileged"
+    return "assistant"
+
+
+def manage_tier_permissions():
+    """View and edit per-agent Claude Code permissions (reads from agents.yaml + team.json)."""
+
+    agents_cfg = _load_agents_yaml()
+    team = _load_team_json()
+    agents_dir = _resolve_agents_dir()
+
+    if not agents_cfg.get("agents"):
+        err("No agents found in agents.yaml")
+        return
+
+    # Show current state per agent
+    print(f"\n  {BOLD}Agent Permissions{RESET}")
+    print()
+    info("Source: team.json (tier) + agents.yaml (cc_allow override)")
+    info("Tier defaults: privileged → full access, coordinator → read + restricted shell, assistant → read only")
+    print()
+
+    agent_list = []
+    for name, cfg in agents_cfg["agents"].items():
+        tier = _agent_tier(name, agents_cfg, team)
+        cc_allow = cfg.get("cc_allow")
+        if cc_allow:
+            source = "cc_allow (custom)"
+            perms = cc_allow
+        else:
+            source = f"tier:{tier} (default)"
+            perms = cc_allow_for_tier(tier)
+
+        agent_list.append((name, tier, cc_allow, perms, source))
+        display = cfg.get("display_name", name)
+        print(f"  {BOLD}{display}{RESET} ({name})  —  {source}")
+        for p in perms:
+            print(f"    {GREEN}✓{RESET} {p}")
+        print()
+
+    if not agent_list:
+        return
+
+    # Edit an agent's permissions
+    print(f"  {BOLD}Edit agent permissions?{RESET}")
+    print()
+    for i, (name, *_) in enumerate(agent_list, 1):
+        print(f"    {i}) {name}")
+    print(f"    s) Skip")
+    print()
+
+    choice = ask("Edit which agent", "s").lower()
+    if choice == "s":
+        return
+
+    try:
+        idx = int(choice) - 1
+        agent_name, tier, cc_allow, current_perms, _ = agent_list[idx]
+    except (ValueError, IndexError):
+        err("Invalid choice")
+        return
+
+    print()
+    info(f"Current tier: {tier}")
+    info(f"Current allow: {', '.join(current_perms)}")
+    print()
+    print(f"    1) Use tier default ({tier}) — derives from team.json")
+    print(f"    2) Change tier")
+    print(f"    3) Set custom cc_allow list in agents.yaml")
+    print()
+
+    action = ask("Action", "1")
+
+    if action == "1":
+        # Remove any cc_allow override, use tier default
+        if "cc_allow" in agents_cfg["agents"][agent_name]:
+            del agents_cfg["agents"][agent_name]["cc_allow"]
+            _save_agents_yaml(agents_cfg)
+            ok(f"Removed cc_allow override — using tier default ({tier})")
+        else:
+            info("Already using tier default")
+        allow_list = cc_allow_for_tier(tier)
+
+    elif action == "2":
+        new_tier = ask_choice("New tier", ["privileged", "coordinator", "assistant"], default=tier)
+        if new_tier == tier:
+            info("Tier unchanged")
+            allow_list = cc_allow_for_tier(tier)
+        else:
+            # Update team.json
+            for entry in team.get("agents", []):
+                if entry.get("id") == agent_name:
+                    entry["agent_tier"] = new_tier
+                    break
+            team_path = CONFIG_DIR / "team.json"
+            team_path.write_text(json.dumps(team, indent=2) + "\n")
+            ok(f"Updated team.json: {agent_name} → {new_tier}")
+
+            # Update disallow_builtins in agents.yaml to match
+            if new_tier == "privileged":
+                agents_cfg["agents"][agent_name].pop("disallow_builtins", None)
+                agents_cfg["agents"][agent_name]["privileged"] = True
+            else:
+                agents_cfg["agents"][agent_name]["disallow_builtins"] = [
+                    "Edit", "Write", "Bash", "MultiEdit",
+                ]
+                agents_cfg["agents"][agent_name].pop("privileged", None)
+
+            # Remove cc_allow override since we're using tier default
+            agents_cfg["agents"][agent_name].pop("cc_allow", None)
+            _save_agents_yaml(agents_cfg)
+            ok(f"Updated agents.yaml for tier {new_tier}")
+            allow_list = cc_allow_for_tier(new_tier)
+
+    elif action == "3":
+        allow_list = _permission_checklist(current_perms)
+        agents_cfg["agents"][agent_name]["cc_allow"] = allow_list
+        _save_agents_yaml(agents_cfg)
+        ok(f"Saved custom cc_allow to agents.yaml")
+
+    else:
+        err("Invalid action")
+        return
+
+    # Regenerate settings.json
+    if agents_dir:
+        settings_file = agents_dir / agent_name / ".claude" / "settings.json"
+        if settings_file.exists():
+            try:
+                existing = json.loads(settings_file.read_text())
+            except (json.JSONDecodeError, FileNotFoundError):
+                existing = {}
+            existing.setdefault("permissions", {})["allow"] = allow_list
+            existing.setdefault("permissions", {})["deny"] = []
+            settings_file.write_text(json.dumps(existing, indent=2) + "\n")
+            ok(f"Regenerated {agent_name}/.claude/settings.json")
+        else:
+            warn(f"No settings.json found at {settings_file} — will be created on next agent setup")
+
+
+def _resolve_agents_dir() -> Path | None:
+    """Find agents directory from overlay or project root."""
+    overlay = os.environ.get("TARS_OVERLAY")
+    if overlay:
+        return Path(overlay) / "agents"
+    return PROJECT_ROOT / "agents"
+
+
+def _load_agents_yaml() -> dict:
+    """Load agents.yaml from config dir."""
+    path = CONFIG_DIR / "agents.yaml"
+    if not path.exists():
+        return {}
+    return yaml.safe_load(path.read_text()) or {}
+
+
+def _save_agents_yaml(data: dict):
+    """Write agents.yaml back to config dir."""
+    path = CONFIG_DIR / "agents.yaml"
+    path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
+
+
+# ==========================================================================
 # Main menu
 # ==========================================================================
 
@@ -1326,6 +1565,7 @@ MENU_ITEMS = [
     ("12", "Timers (systemd)", manage_timers, False),
     ("13", "Ops Instance", create_ops_instance, False),
     ("14", "Vault Secrets", manage_vault, False),
+    ("15", "Tier Permissions", manage_tier_permissions, False),
     ("q", "Quit", None, False),
 ]
 
