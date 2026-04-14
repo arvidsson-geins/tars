@@ -730,13 +730,29 @@ def manage_vault():
         err("Could not open vault.")
         return
 
-    keys = vault.list_keys()
-    if keys:
-        info(f"{len(keys)} secret(s) stored:")
-        for key in sorted(keys):
-            print(f"    - {key}")
-    else:
-        info("Vault is empty.")
+    def show_keys() -> list[str]:
+        keys = sorted(vault.list_keys())
+        if keys:
+            info(f"{len(keys)} secret(s) stored:")
+            for i, key in enumerate(keys, 1):
+                print(f"    {i:>2}) {key}")
+        else:
+            info("Vault is empty.")
+        return keys
+
+    def pick_key(prompt: str, keys: list[str]) -> str | None:
+        val = ask(prompt)
+        if not val:
+            return None
+        if val.isdigit():
+            idx = int(val) - 1
+            if 0 <= idx < len(keys):
+                return keys[idx]
+            err(f"Number out of range (1-{len(keys)}).")
+            return None
+        return val
+
+    sorted_keys = show_keys()
 
     print()
     print("  Options:")
@@ -750,18 +766,23 @@ def manage_vault():
         if choice in ("3", "back", "b", ""):
             break
         elif choice == "1":
-            key = ask("Secret name (e.g. discord-luna, anthropic-key)")
+            key = pick_key("Secret number or name (e.g. gemini-api-key, cloudflare-api-token)", sorted_keys)
             if not key:
                 continue
+            if not key.startswith("secrets/") and not key.startswith("discord-") and not key.startswith("active-") and not key.isupper():
+                key = f"secrets/{key}"
+                info(f"Auto-prefixed → '{key}'")
             value = ask_secret(f"Value for '{key}'")
             if value:
                 vault.set(key, value)
                 ok(f"Stored '{key}'")
+                sorted_keys = show_keys()
         elif choice == "2":
-            key = ask("Secret name to remove")
+            key = pick_key("Secret number or name to remove", sorted_keys)
             if key and key in vault.list_keys():
                 vault.delete(key)
                 ok(f"Removed '{key}'")
+                sorted_keys = show_keys()
             else:
                 err(f"Secret '{key}' not found.")
 
