@@ -217,7 +217,6 @@ def _init_tool_log(data_dir: str) -> "sqlite3.Connection | None":
         atexit.register(_close_tool_log)
 
         def _signal_exit(signum, frame):
-            _close_tool_log()
             raise SystemExit(0)
 
         signal.signal(signal.SIGTERM, _signal_exit)
