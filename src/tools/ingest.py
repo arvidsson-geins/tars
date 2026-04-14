@@ -31,6 +31,7 @@ _BLOCKED_NETS = [
 
 
 _PROJECT_ROOT = PROJECT_ROOT
+_OVERLAY = os.environ.get("TARS_OVERLAY", "")
 
 ALLOWED_PATH_ROOTS = (
     Path("/tmp"),
@@ -39,6 +40,11 @@ ALLOWED_PATH_ROOTS = (
     _PROJECT_ROOT / "data",
     _PROJECT_ROOT / "codex",
     _PROJECT_ROOT / "skills",
+    *(
+        (Path(_OVERLAY),)
+        if _OVERLAY
+        else ()
+    ),
 )
 
 
