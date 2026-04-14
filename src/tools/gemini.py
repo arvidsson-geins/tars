@@ -252,7 +252,7 @@ async def gemini_generate_image(ctx: ToolContext, prompt: str, output_path: str 
     Args:
         prompt: Description of the image to generate
         output_path: Where to save the image (default: data/generated/<timestamp>.png)
-        model: Gemini model to use (default: gemini-2.0-flash-preview-image-generation)
+        model: Gemini model to use (default: gemini-3.1-flash-image-preview)
     """
     contents = [{"parts": [{"text": prompt}]}]
     generation_config = {"responseModalities": ["TEXT", "IMAGE"]}
