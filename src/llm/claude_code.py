@@ -160,11 +160,11 @@ class ClaudeCodeProvider(LLMProvider):
                         continue
 
                     if is_auth_error:
-                        # Stage 1: Force token refresh, retry with --resume intact
-                        if "--resume" in args and not refreshed_token:
+                        # Stage 1: Force token refresh on first auth error
+                        if not refreshed_token:
                             logger.warning(
-                                "Auth error with --resume — forcing token refresh, "
-                                "retrying with session intact..."
+                                f"Auth error (attempt {attempt}/{max_attempts}) — "
+                                f"forcing token refresh, retrying..."
                             )
                             await self._force_token_refresh()
                             refreshed_token = True
@@ -197,16 +197,22 @@ class ClaudeCodeProvider(LLMProvider):
                             "Fix: run 'claude setup-token' as the tars user, then restart."
                         )
                         return LLMResponse(
-                            content="Authentication failed — the Claude token needs to be refreshed. An admin needs to run `claude setup-token`.",
+                            content="I'm having trouble connecting right now — my authentication needs attention. Try again in a few minutes, and let Peter know if it keeps happening.",
                             stop_reason="error",
                         )
 
+                    # Non-auth CLI error — retry with backoff
                     logger.error(
-                        f"Claude Code failed (exit={proc.returncode}): {error_msg}"
+                        f"Claude Code failed (attempt {attempt}/{max_attempts}, "
+                        f"exit={proc.returncode}): {error_msg}"
                         + (f" | stdout: {stdout_text[:300]}" if stdout_text and not error_detail else "")
                     )
+                    if attempt < max_attempts:
+                        await asyncio.sleep(2 * attempt)
+                        continue
+
                     return LLMResponse(
-                        content=f"Error from Claude Code: {error_msg}",
+                        content="Sorry, something went wrong on my end. Try sending that again — if it keeps failing, let Peter know.",
                         stop_reason="error",
                     )
 
@@ -221,15 +227,20 @@ class ClaudeCodeProvider(LLMProvider):
             except FileNotFoundError:
                 logger.error(f"Claude Code CLI not found at '{self._claude_bin}'")
                 return LLMResponse(
-                    content="Claude Code CLI not found. Is it installed?",
+                    content="I can't start up right now — there's a system issue. Let Peter know.",
                     stop_reason="error",
                 )
             except asyncio.TimeoutError:
-                logger.error(f"Claude Code timed out after {self._timeout}s")
                 if proc:
                     proc.kill()
+                logger.error(
+                    f"Claude Code timed out (attempt {attempt}/{max_attempts}) "
+                    f"after {kwargs.get('timeout', self._timeout)}s"
+                )
+                if attempt < max_attempts:
+                    continue
                 return LLMResponse(
-                    content="Claude Code timed out. Try a simpler request.",
+                    content="That took too long and I had to stop. Try a shorter question, or break it into parts.",
                     stop_reason="timeout",
                 )
 
