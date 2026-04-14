@@ -7,6 +7,7 @@ Skills are YAML — safe, declarative, composable. No arbitrary code.
 import ipaddress
 import json
 import logging
+import os
 import socket
 from pathlib import Path
 from urllib.parse import urlparse
