@@ -181,12 +181,16 @@ def _redact_for_display(args: dict) -> str:
 
 def _init_tool_log(data_dir: str) -> "sqlite3.Connection | None":
     """Open a synchronous SQLite connection for tool logging."""
+    import atexit
+    import signal
     import sqlite3
     import os
     os.makedirs(data_dir, exist_ok=True)
     db_path = os.path.join(data_dir, "tars.db")
     try:
         conn = sqlite3.connect(db_path)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS tool_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -202,6 +206,21 @@ def _init_tool_log(data_dir: str) -> "sqlite3.Connection | None":
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_log_agent ON tool_log(agent_id, created_at)")
         conn.commit()
+
+        def _close_tool_log():
+            try:
+                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                conn.close()
+            except Exception:
+                pass
+
+        atexit.register(_close_tool_log)
+
+        def _signal_exit(signum, frame):
+            raise SystemExit(0)
+
+        signal.signal(signal.SIGTERM, _signal_exit)
+
         logger.info("Tool log database ready")
         return conn
     except Exception as e:
@@ -209,23 +228,36 @@ def _init_tool_log(data_dir: str) -> "sqlite3.Connection | None":
         return None
 
 
+_TOOL_LOG_MAX_RETRIES = 3
+
 def _log_tool_to_db(conn, agent_id: str, tool_name: str, input_data: dict | None,
                     output: str | None, success: bool, duration_ms: int) -> None:
-    """Write a tool call to the SQLite tool_log table."""
+    """Write a tool call to the SQLite tool_log table. Never fails the caller."""
     if not conn:
         return
-    try:
-        conn.execute(
-            "INSERT INTO tool_log (agent_id, session_id, tool_name, input, output, success, duration_ms) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (agent_id, None, tool_name,
-             json.dumps(input_data)[:2000] if input_data else None,
-             output[:2000] if output else None,
-             int(success), duration_ms),
-        )
-        conn.commit()
-    except Exception as e:
-        logger.debug(f"Tool log write failed: {e}")
+    import sqlite3
+    for attempt in range(_TOOL_LOG_MAX_RETRIES):
+        try:
+            conn.execute(
+                "INSERT INTO tool_log (agent_id, session_id, tool_name, input, output, success, duration_ms) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (agent_id, None, tool_name,
+                 json.dumps(input_data)[:2000] if input_data else None,
+                 output[:2000] if output else None,
+                 int(success), duration_ms),
+            )
+            conn.commit()
+            return
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e) and attempt < _TOOL_LOG_MAX_RETRIES - 1:
+                import time
+                time.sleep(0.1 * (attempt + 1))
+                continue
+            logger.debug(f"Tool log write failed (attempt {attempt + 1}): {e}")
+            return
+        except Exception as e:
+            logger.debug(f"Tool log write failed: {e}")
+            return
 
 
 # --- Build the MCP server ---
@@ -254,9 +286,18 @@ def build_server(vault: FernetVault, config: dict) -> FastMCP:
     mem_cfg = defaults.get("memory", {})
     backend_name = mem_cfg.get("backend", "sqlite")
     if backend_name == "sqlite":
+        import atexit as _atexit
         from src.memory.sqlite import SQLiteMemory
         memory = SQLiteMemory(config=mem_cfg)
         logger.info("Memory backend: SQLite (inline)")
+
+        def _close_memory_db():
+            try:
+                memory.db.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                memory.db.close()
+            except Exception:
+                pass
+        _atexit.register(_close_memory_db)
     elif backend_name:
         logger.warning(
             f"Unknown memory backend '{backend_name}' in config — "
