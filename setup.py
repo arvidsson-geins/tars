@@ -1086,7 +1086,7 @@ def step_systemd(state: dict):
                 # Replace with overlay-aware paths regardless of template formatting
                 new_lines.append(
                     f"ReadWritePaths={PROJECT_ROOT}/data {overlay}/agents {overlay}/config "
-                    f"{overlay}/tmp /tmp {tars_home}/.cache {tars_home}/.claude"
+                    f"{overlay}/data {overlay}/tmp /tmp {tars_home}/.cache {tars_home}/.claude"
                 )
             elif line.startswith("ReadOnlyPaths="):
                 new_lines.append(f"ReadOnlyPaths={PROJECT_ROOT} {overlay}")
