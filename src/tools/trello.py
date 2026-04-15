@@ -95,7 +95,7 @@ async def trello_boards(ctx: ToolContext) -> str:
 
     lines = [f"**Trello Boards ({len(result)}):**"]
     for b in result:
-        lines.append(f"  - {b['name']} — {b.get('url', '')} (last activity: {b.get('dateLastActivity', '?')[:10]})")
+        lines.append(f"  - {b['name']} — <{b.get('url', '')}> (last activity: {b.get('dateLastActivity', '?')[:10]})")
     return "\n".join(lines)
 
 
@@ -247,7 +247,7 @@ async def trello_create_card(ctx: ToolContext, list_id: str, name: str,
     if isinstance(result, dict) and "error" in result:
         return f"Failed to create card: {result['error']}"
 
-    return f"Card created: {result.get('name', name)} — {result.get('url', '')}"
+    return f"Card created: {result.get('name', name)} — <{result.get('url', '')}>"
 
 
 @tool(name="trello_archive_card", description="Archive (close) a Trello card", category="trello")
@@ -343,5 +343,5 @@ async def trello_card_detail(ctx: ToolContext, card_id: str) -> str:
             text = c.get("data", {}).get("text", "")[:300]
             lines.append(f"  {date} | {who}: {text}")
 
-    lines.append(f"\nURL: {result.get('url', '?')}")
+    lines.append(f"\nURL: <{result.get('url', '?')}>")
     return "\n".join(lines)
