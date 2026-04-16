@@ -79,7 +79,7 @@ TUI menu for: LLM defaults, connectors, memory, HITL gates, rate limits, agents,
 ### UPDATING
 
 ```bash
-cd /opt/tars
+cd "$TARS_HOME"                    # default: /opt/tars
 git pull
 scripts/sync.sh                    # must run before restart — installs deps across all layers
 sudo systemctl restart tars.service
@@ -92,8 +92,8 @@ sudo systemctl restart tars.service
 All files under the install directory are owned by `tars:tars` (the service user). If you edit files as root, `chown tars:tars` them back — root-owned files in the tree break `uv sync` and are not writable by the service.
 
 ```bash
-# Check for root-owned files
-find /opt/tars -not -user tars 2>/dev/null
+# Check for root-owned files (TARS_HOME defaults to /opt/tars)
+find "$TARS_HOME" -not -user tars 2>/dev/null
 ```
 
 ### PROFILES
@@ -342,6 +342,29 @@ DEFCON STATUS: LOCKED DOWN
 - **Bot loop detection** — sliding window prevents runaway agent-to-agent ping-pong
 - **Message dedup** — same content to same channel within 120s is dropped
 - **Agent-scoped memory** — agents only see their own memories + shared scope
+
+## DEPLOYMENT ARCHITECTURE
+
+T.A.R.S separates the engine from your deployment. Core stays clean and updatable. Your config, agents, tools, and data live in a separate overlay directory that `setup.py` creates automatically.
+
+**Two-layer** (simple — single deployment):
+```
+Core:    /opt/tars              ← Engine (this repo)
+Overlay: /opt/tars-myproject    ← Config, agents, custom tools, data (your private repo)
+```
+
+**Three-layer** (multiple deployments sharing tools):
+```
+Core:    /opt/tars              ← Engine (this repo)
+Modules: /opt/tars-modules      ← Shared domain tools/skills (private repo)
+Overlay: /opt/tars-deploy-a     ← Deployment-specific config + agents (private repo)
+```
+
+The setup wizard handles both patterns. Two env vars control discovery:
+- `TARS_OVERLAY` — path to the overlay (always required, set by `setup.py`)
+- `TARS_OTHS` — colon-separated paths to module directories (optional, for three-layer)
+
+**Keep Core clean.** No personal data, no real config, no domain tools, no agent identities. Core contains `.example` templates only. This ensures `git pull` never conflicts with your deployment. See [ARCHITECTURE.md → Keeping Core Clean](ARCHITECTURE.md#keeping-core-clean) for the full rules.
 
 ## MIGRATING FROM OPENCLAW
 
