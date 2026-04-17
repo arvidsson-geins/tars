@@ -522,12 +522,12 @@ class AgentManager:
                         mcp_config=mcp_config,
                         proc_callback=lambda p: self._running_procs.__setitem__(agent_id, p),
                     )
-                    self._running_procs.pop(agent_id, None)
                 except Exception as e:
-                    self._running_procs.pop(agent_id, None)
                     logger.error(f"LLM error for {agent_id}: {e}", exc_info=True)
                     await connector.send(message.channel_id, f"Error: {e}")
                     return
+                finally:
+                    self._running_procs.pop(agent_id, None)
 
                 # No tool calls — we're done
                 if not response.tool_calls:

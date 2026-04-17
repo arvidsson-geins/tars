@@ -155,15 +155,30 @@ class AccessControl:
         if is_bot or self.resolve_tier(user_id) == "agent":
             sender_agent_tier = self.get_sender_agent_tier(user_id)
             if not sender_agent_tier:
-                # Unknown bot — deny
+                logger.info(
+                    f"Access denied: unknown bot {user_id} → agent {agent_id} "
+                    f"(target_tier={target_tier})"
+                )
                 return False
             allowed_targets = _AGENT_MESSAGE_RULES.get(sender_agent_tier, set())
-            return target_tier in allowed_targets
+            allowed = target_tier in allowed_targets
+            if not allowed:
+                logger.info(
+                    f"Access denied: agent {user_id} (tier={sender_agent_tier}) "
+                    f"→ agent {agent_id} (tier={target_tier})"
+                )
+            return allowed
 
         # Human sender
         sender_tier = self.resolve_tier(user_id)
         allowed_targets = _MESSAGE_RULES.get(sender_tier, set())
-        return target_tier in allowed_targets
+        allowed = target_tier in allowed_targets
+        if not allowed:
+            logger.info(
+                f"Access denied: user {user_id} (tier={sender_tier}) "
+                f"→ agent {agent_id} (tier={target_tier})"
+            )
+        return allowed
 
     # --- Layer 2: What tools? ---
 

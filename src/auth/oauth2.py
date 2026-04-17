@@ -4,11 +4,12 @@ Handles Google OAuth2 token refresh for Gmail, Drive, Calendar, etc.
 Tokens stored in vault (encrypted). Auto-refreshes when expired.
 """
 
+import asyncio
 import json
 import logging
 import time
-from urllib.request import Request, urlopen
-from urllib.error import URLError
+
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class OAuth2Token:
         self._access_token: str | None = None
         self._expires_at: float = 0
         self._token_url: str = GOOGLE_TOKEN_URL
+        self._refresh_lock = asyncio.Lock()
 
     @property
     def client_id(self) -> str:
@@ -56,7 +58,11 @@ class OAuth2Token:
         if self._access_token and time.time() < self._expires_at - 60:
             return self._access_token
 
-        return await self._refresh()
+        async with self._refresh_lock:
+            # Double-check after acquiring lock (another coroutine may have refreshed)
+            if self._access_token and time.time() < self._expires_at - 60:
+                return self._access_token
+            return await self._refresh()
 
     async def _refresh(self) -> str:
         """Refresh the access token using the refresh token."""
@@ -67,24 +73,23 @@ class OAuth2Token:
                 f"{self.prefix}_REFRESH_TOKEN in vault."
             )
 
-        data = (
-            f"client_id={self.client_id}"
-            f"&client_secret={self.client_secret}"
-            f"&refresh_token={self.refresh_token}"
-            f"&grant_type=refresh_token"
-        ).encode()
-
-        req = Request(
-            self._token_url,
-            data=data,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            method="POST",
-        )
+        data = {
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "refresh_token": self.refresh_token,
+            "grant_type": "refresh_token",
+        }
 
         try:
-            with urlopen(req, timeout=10) as resp:
-                result = json.loads(resp.read().decode())
-        except URLError as e:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self._token_url, data=data, timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    result = await resp.json()
+                    if resp.status != 200:
+                        error = result.get("error_description", result.get("error", resp.status))
+                        raise RuntimeError(f"OAuth2 refresh failed for {self.prefix}: {error}")
+        except aiohttp.ClientError as e:
             logger.error(f"OAuth2 refresh failed for {self.prefix}: {e}")
             raise
 
