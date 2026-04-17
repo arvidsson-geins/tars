@@ -82,9 +82,9 @@ class TestCanMessageOwner:
 
 
 class TestCanMessageAdmin:
-    """Admin (Bob) can message coordinator + assistant, NOT privileged."""
+    """Admin (Bob) can message privileged + coordinator + assistant (same reach as owner)."""
     def test_admin_to_privileged(self, ac):
-        assert ac.can_message("222", "ops") is False
+        assert ac.can_message("222", "ops") is True
 
     def test_admin_to_coordinator(self, ac):
         assert ac.can_message("222", "coordinator") is True
@@ -268,9 +268,9 @@ class TestDisallowedBuiltinsForSender:
         assert ac.disallowed_builtins_for_sender("111") == []
 
     def test_admin_blocked(self, ac):
+        # Admin: Bash blocked, but Edit/Write/MultiEdit allowed (per access_control.py).
         blocked = ac.disallowed_builtins_for_sender("222")
-        assert "Bash" in blocked
-        assert "Edit" in blocked
+        assert blocked == ["Bash"]
 
     def test_staff_blocked(self, ac):
         blocked = ac.disallowed_builtins_for_sender("333")
