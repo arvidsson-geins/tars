@@ -4,10 +4,10 @@ After=tars.service
 
 [Service]
 Type=oneshot
-Environment=TARS_HOME=@TARS_HOME@
+Environment=TARS_HOME=/opt/tars
 User=tars
 Group=tars
-WorkingDirectory=@TARS_HOME@
-ExecStart=@TARS_HOME@/scripts/monitor-integrity.sh
+WorkingDirectory=/opt/tars
+ExecStart=/opt/tars/scripts/monitor-integrity.sh
 StandardOutput=append:/var/log/tars-security.log
 StandardError=append:/var/log/tars-security.log

@@ -142,15 +142,16 @@ async def run_preflight(config: dict, vault, storage_path: str) -> bool:
     failed = 0
     warnings = 0
 
-    # --- Config schema validation (typo detection + required keys) ---
+    # --- Config schema validation (missing required keys + wrong types) ---
+    # Unknown-key warnings are emitted at DEBUG only — deployments legitimately
+    # add custom sections; treating those as boot-time noise is wrong.
     schema_errors, schema_warnings = validate_config(config)
     for e in schema_errors:
         logger.error(f"  ✗ config_schema: {e}")
         failed += 1
     for w in schema_warnings:
-        logger.warning(f"  ⚠ config_schema: {w}")
-        warnings += 1
-    if not schema_errors and not schema_warnings:
+        logger.debug(f"  config_schema (unknown key): {w}")
+    if not schema_errors:
         logger.info("  ✓ config_schema: OK")
         passed += 1
 

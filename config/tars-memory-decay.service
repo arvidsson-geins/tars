@@ -6,5 +6,5 @@ After=tars.service
 Type=oneshot
 User=tars
 Group=tars
-WorkingDirectory=@TARS_HOME@
-ExecStart=@TARS_HOME@/scripts/memory-decay.sh
+WorkingDirectory=/opt/tars
+ExecStart=/opt/tars/scripts/memory-decay.sh

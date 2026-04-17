@@ -1056,12 +1056,12 @@ def step_systemd(state: dict):
             if not f.is_file():
                 continue
 
-            # Templates use @TARS_HOME@ as placeholder for the install path.
-            # Fall back to the legacy /opt/tars path regex for any template
-            # that hasn't been migrated yet (harmless on modern templates).
-            raw = f.read_text()
-            content = raw.replace("@TARS_HOME@", str(PROJECT_ROOT))
-            content = re.sub(r"/opt/tars(?=/|$)", str(PROJECT_ROOT), content)
+            # Templates carry literal /opt/tars; rewrite only for non-default installs.
+            # Keeping literals means vanilla Core installs with symlinked units
+            # (the default from install-systemd.sh) survive `git pull` unscathed.
+            content = f.read_text()
+            if str(PROJECT_ROOT) != "/opt/tars":
+                content = re.sub(r"/opt/tars(?=/|$)", str(PROJECT_ROOT), content)
 
             # Inject TARS_OVERLAY into service files (after TARS_HOME line)
             if f.name.endswith(".service"):
@@ -1092,9 +1092,9 @@ def step_systemd(state: dict):
 
         service = template_path.read_text()
 
-        # Templates use @TARS_HOME@; legacy /opt/tars regex kept as fallback.
-        service = service.replace("@TARS_HOME@", str(PROJECT_ROOT))
-        service = re.sub(r"/opt/tars(?=/|$)", str(PROJECT_ROOT), service)
+        # Rewrite /opt/tars only for non-default installs; vanilla paths pass through.
+        if str(PROJECT_ROOT) != "/opt/tars":
+            service = re.sub(r"/opt/tars(?=/|$)", str(PROJECT_ROOT), service)
         service = service.replace(
             "ExecStart=/usr/local/bin/uv",
             f"ExecStart={uv_path}",

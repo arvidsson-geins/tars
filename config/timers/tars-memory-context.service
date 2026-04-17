@@ -3,11 +3,11 @@ Description=T.A.R.S Memory Context Regen
 After=tars.service
 
 [Service]
-Environment=TARS_HOME=@TARS_HOME@
+Environment=TARS_HOME=/opt/tars
 Type=oneshot
 User=tars
 Group=tars
-WorkingDirectory=@TARS_HOME@
-ExecStart=@TARS_HOME@/scripts/regen-memory-context.sh
+WorkingDirectory=/opt/tars
+ExecStart=/opt/tars/scripts/regen-memory-context.sh
 StandardOutput=append:/var/log/tars-context.log
 StandardError=append:/var/log/tars-context.log
