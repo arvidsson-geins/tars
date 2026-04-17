@@ -59,6 +59,7 @@ class ClaudeCodeProvider(LLMProvider):
         session_id = kwargs.get("session_id")
         allowed_tools = kwargs.get("allowed_tools")
         disallowed_tools = kwargs.get("disallowed_tools")
+        effort = kwargs.get("effort")
 
         # Build the prompt from messages
         resuming = session_id is not None
@@ -70,6 +71,10 @@ class ClaudeCodeProvider(LLMProvider):
         # Model
         resolved_model = MODEL_MAP.get(model, model)
         args.extend(["--model", resolved_model])
+
+        # Effort (thinking level) — accepted values: low, medium, high, xhigh, max
+        if effort:
+            args.extend(["--effort", effort])
 
         # Session management
         if session_id:

@@ -448,6 +448,12 @@ class AgentManager:
         llm_model = llm_cfg.get("model",
                      self.defaults.get("llm", {}).get("model", "opus"))
         mcp_config = llm_cfg.get("mcp_config") or self.defaults.get("llm", {}).get("mcp_config")
+        llm_effort = agent_cfg.get("effort")
+        # Runtime overrides (Discord /model, /effort) win over agents.yaml.
+        if self.storage:
+            overrides = await self.storage.get_agent_overrides(agent_id)
+            llm_model = overrides.get("model", llm_model)
+            llm_effort = overrides.get("effort", llm_effort)
 
         # Build allowed/disallowed tools for Claude Code CLI
         # allowed_tools: auto-approve these (no permission prompt)
@@ -516,6 +522,7 @@ class AgentManager:
                         tools=tools if tools else None,
                         project_dir=project_dir,
                         model=llm_model,
+                        effort=llm_effort,
                         session_id=session.cli_session_id,
                         allowed_tools=allowed_tools,
                         disallowed_tools=disallowed_tools,
@@ -627,6 +634,11 @@ class AgentManager:
         llm_model = llm_cfg.get("model",
                      self.defaults.get("llm", {}).get("model", "opus"))
         mcp_config = llm_cfg.get("mcp_config") or self.defaults.get("llm", {}).get("mcp_config")
+        llm_effort = agent_cfg.get("effort")
+        if self.storage:
+            overrides = await self.storage.get_agent_overrides(agent_id)
+            llm_model = overrides.get("model", llm_model)
+            llm_effort = overrides.get("effort", llm_effort)
 
         response = None
         for round_num in range(self._max_tool_rounds):
@@ -636,6 +648,7 @@ class AgentManager:
                     tools=tools if tools else None,
                     project_dir=project_dir,
                     model=llm_model,
+                    effort=llm_effort,
                     session_id=session.cli_session_id,
                     mcp_config=mcp_config,
                 )

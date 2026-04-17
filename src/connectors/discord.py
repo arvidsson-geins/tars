@@ -594,11 +594,12 @@ class DiscordBot:
             await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
         @self.tree.command(name="model", description="View or change the LLM model for this agent")
-        @app_commands.describe(model="Model to switch to")
+        @app_commands.describe(model="Model to switch to (omit to view; 'default' clears override)")
         @app_commands.choices(model=[
             app_commands.Choice(name="opus", value="opus"),
             app_commands.Choice(name="sonnet", value="sonnet"),
             app_commands.Choice(name="haiku", value="haiku"),
+            app_commands.Choice(name="default", value="default"),
         ])
         async def cmd_model(interaction: discord.Interaction, model: str | None = None):
             agent_id = self._resolve_agent(interaction)
@@ -607,21 +608,91 @@ class DiscordBot:
                 return
 
             agent_cfg = self.connector._agent_configs.get(agent_id, {})
+            storage = getattr(self.connector._agent_manager, "storage", None) \
+                if getattr(self.connector, "_agent_manager", None) else None
+            yaml_model = agent_cfg.get("llm", {}).get("model", "unknown")
 
             if model is None:
-                # Show current model
-                current = agent_cfg.get("llm", {}).get("model", "unknown")
+                override = await storage.get_agent_override(agent_id, "model") if storage else None
+                effective = override or yaml_model
+                suffix = " (override)" if override else " (config)"
                 await interaction.response.send_message(
-                    f"**{agent_id}** is using model: `{current}`", ephemeral=True
+                    f"**{agent_id}** model: `{effective}`{suffix}", ephemeral=True
+                )
+                return
+
+            if not self._is_admin(interaction.user.id):
+                await interaction.response.send_message("Not authorized.", ephemeral=True)
+                return
+            if not storage:
+                await interaction.response.send_message("Storage unavailable.", ephemeral=True)
+                return
+            if model == "default":
+                await storage.set_agent_override(agent_id, "model", None)
+                await interaction.response.send_message(
+                    f"Cleared model override for **{agent_id}** — using config (`{yaml_model}`).",
+                    ephemeral=True,
                 )
             else:
-                # Change model
-                if not self._is_admin(interaction.user.id):
-                    await interaction.response.send_message("Not authorized.", ephemeral=True)
-                    return
-                agent_cfg.setdefault("llm", {})["model"] = model
+                await storage.set_agent_override(agent_id, "model", model)
                 await interaction.response.send_message(
-                    f"Switched **{agent_id}** to `{model}`.", ephemeral=True
+                    f"**{agent_id}** model set to `{model}` (persists across restarts).",
+                    ephemeral=True,
+                )
+
+        @self.tree.command(name="effort", description="View or change the thinking effort level for this agent")
+        @app_commands.describe(level="Effort level (omit to view; 'default' clears override)")
+        @app_commands.choices(level=[
+            app_commands.Choice(name="low", value="low"),
+            app_commands.Choice(name="medium", value="medium"),
+            app_commands.Choice(name="high", value="high"),
+            app_commands.Choice(name="xhigh", value="xhigh"),
+            app_commands.Choice(name="max", value="max"),
+            app_commands.Choice(name="default", value="default"),
+        ])
+        async def cmd_effort(interaction: discord.Interaction, level: str | None = None):
+            agent_id = self._resolve_agent(interaction)
+            if not agent_id:
+                await interaction.response.send_message("No agent in this channel.", ephemeral=True)
+                return
+
+            agent_cfg = self.connector._agent_configs.get(agent_id, {})
+            storage = getattr(self.connector._agent_manager, "storage", None) \
+                if getattr(self.connector, "_agent_manager", None) else None
+            yaml_effort = agent_cfg.get("effort")
+
+            if level is None:
+                override = await storage.get_agent_override(agent_id, "effort") if storage else None
+                effective = override or yaml_effort or "unset"
+                if override:
+                    suffix = " (override)"
+                elif yaml_effort:
+                    suffix = " (config)"
+                else:
+                    suffix = " — CLI picks default"
+                await interaction.response.send_message(
+                    f"**{agent_id}** effort: `{effective}`{suffix}", ephemeral=True
+                )
+                return
+
+            if not self._is_admin(interaction.user.id):
+                await interaction.response.send_message("Not authorized.", ephemeral=True)
+                return
+            if not storage:
+                await interaction.response.send_message("Storage unavailable.", ephemeral=True)
+                return
+            if level == "default":
+                await storage.set_agent_override(agent_id, "effort", None)
+                fallback = yaml_effort or "CLI default"
+                await interaction.response.send_message(
+                    f"Cleared effort override for **{agent_id}** — using {fallback}.",
+                    ephemeral=True,
+                )
+            else:
+                await storage.set_agent_override(agent_id, "effort", level)
+                await interaction.response.send_message(
+                    f"**{agent_id}** effort set to `{level}` (persists across restarts).",
+                    ephemeral=True,
                 )
 
         @self.tree.command(name="stop", description="Stop the agent's current task")
