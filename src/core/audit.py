@@ -3,10 +3,18 @@
 Logs all tool executions, HITL events, rate limit hits, content safety alerts,
 and auth events. Secrets are redacted. File is line-buffered, never truncated
 by the application. Rotate with standard logrotate if needed.
+
+Uses threading.Lock (not asyncio.Lock) because this is called from both async
+(core agent manager) and sync (MCP server subprocess) contexts, and file I/O
+via built-in open() is blocking. threading.Lock is safe in both, whereas
+asyncio.Lock would break sync callers. Writes are fast (line-buffered append)
+so loop blocking is negligible in practice.
 """
 
+import atexit
 import json
 import logging
+import threading
 import time
 from pathlib import Path
 
@@ -21,9 +29,9 @@ class AuditLog:
     def __init__(self, log_path: str | Path = "data/audit.jsonl"):
         self._path = Path(log_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._buffer: list[dict] = []
-        self._buffer_limit = 100
+        self._lock = threading.Lock()
         self._file = None
+        atexit.register(self.close)
 
     def _ensure_open(self):
         if self._file is None or self._file.closed:
@@ -113,8 +121,9 @@ class AuditLog:
     def _write(self, entry: dict) -> None:
         """Write an entry to the log file."""
         try:
-            self._ensure_open()
-            self._file.write(json.dumps(entry, default=str) + "\n")
+            with self._lock:
+                self._ensure_open()
+                self._file.write(json.dumps(entry, default=str) + "\n")
         except Exception as e:
             logger.error(f"Audit log write failed: {e}")
 

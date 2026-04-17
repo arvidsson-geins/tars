@@ -105,69 +105,74 @@ class MCPHitlGate:
         api = "https://discord.com/api/v10"
 
         try:
-            async with aiohttp.ClientSession() as session:
-                # Post message
-                async with session.post(
-                    f"{api}/channels/{self.channel_id}/messages",
-                    headers=headers,
-                    json={"content": msg_text},
-                ) as resp:
-                    if resp.status != 200:
-                        logger.error(f"HITL post failed: {resp.status}")
-                        if self.fail_mode == "closed":
-                            return {"status": "denied", "reason": "failed to post"}
-                        return {"status": "approved", "reason": "post failed, fail_mode=open"}
-                    msg_data = await resp.json()
-                    message_id = msg_data["id"]
-
-                # Add reactions
-                for emoji in ["\u2705", "\u274c"]:
-                    emoji_encoded = urllib.parse.quote(emoji)
-                    r = await session.put(
-                        f"{api}/channels/{self.channel_id}/messages/{message_id}/reactions/{emoji_encoded}/@me",
-                        headers=headers,
-                    )
-                    if r.status not in (200, 204):
-                        logger.warning(f"HITL add reaction failed: {r.status} {emoji}")
-
-                # Poll for reactions
-                deadline = time.time() + self.timeout
-                while time.time() < deadline:
-                    await asyncio.sleep(self.poll_interval)
-
-                    for emoji, status in [("\u2705", "approved"), ("\u274c", "denied")]:
-                        emoji_encoded = urllib.parse.quote(emoji)
-                        react_url = f"{api}/channels/{self.channel_id}/messages/{message_id}/reactions/{emoji_encoded}"
-                        async with session.get(
-                            react_url,
-                            headers=headers,
-                        ) as resp:
-                            if resp.status != 200:
-                                logger.warning(f"HITL reaction poll: {resp.status} for {emoji}")
-                                continue
-                            reactors = await resp.json()
-                            for reactor in reactors:
-                                if reactor.get("bot"):
-                                    continue
-                                reactor_id = str(reactor["id"])
-                                if not self.approvers or reactor_id in self.approvers:
-                                    logger.info(f"HITL {hitl_id}: {status} by {reactor_id}")
-                                    result_icon = "Approved" if status == "approved" else "Denied"
-                                    await session.post(
-                                        f"{api}/channels/{self.channel_id}/messages",
-                                        headers=headers,
-                                        json={"content": f"{result_icon}: `{tool_name}` {status} by <@{reactor_id}>"},
-                                    )
-                                    return {"status": status, "approver": reactor_id, "hitl_id": hitl_id}
-
-                logger.warning(f"HITL {hitl_id}: timeout after {self.timeout}s")
-                return {"status": "timeout", "hitl_id": hitl_id}
-
+            return await asyncio.wait_for(
+                self._poll_approval(api, headers, msg_text, tool_name, hitl_id),
+                timeout=self.timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"HITL {hitl_id}: timeout after {self.timeout}s")
+            if self.fail_mode == "open":
+                logger.warning(f"HITL {hitl_id}: fail_mode=open — auto-approving on timeout")
+                return {"status": "approved", "reason": "timeout, fail_mode=open", "hitl_id": hitl_id}
+            return {"status": "timeout", "hitl_id": hitl_id}
         except Exception as e:
             logger.error(f"HITL error: {e}", exc_info=True)
             if self.fail_mode == "closed":
                 return {"status": "denied", "reason": str(e)}
             return {"status": "approved", "reason": f"error, fail_mode=open: {e}"}
+
+    async def _poll_approval(self, api: str, headers: dict, msg_text: str,
+                             tool_name: str, hitl_id: str) -> dict:
+        """Post HITL message and poll for reactions. Called within wait_for timeout."""
+        async with aiohttp.ClientSession() as session:
+            # Post message
+            async with session.post(
+                f"{api}/channels/{self.channel_id}/messages",
+                headers=headers,
+                json={"content": msg_text},
+            ) as resp:
+                if resp.status != 200:
+                    logger.error(f"HITL post failed: {resp.status}")
+                    if self.fail_mode == "closed":
+                        return {"status": "denied", "reason": "failed to post"}
+                    return {"status": "approved", "reason": "post failed, fail_mode=open"}
+                msg_data = await resp.json()
+                message_id = msg_data["id"]
+
+            # Add reactions
+            for emoji in ["\u2705", "\u274c"]:
+                emoji_encoded = urllib.parse.quote(emoji)
+                r = await session.put(
+                    f"{api}/channels/{self.channel_id}/messages/{message_id}/reactions/{emoji_encoded}/@me",
+                    headers=headers,
+                )
+                if r.status not in (200, 204):
+                    logger.warning(f"HITL add reaction failed: {r.status} {emoji}")
+
+            # Poll for reactions (timeout handled by asyncio.wait_for in caller)
+            while True:
+                await asyncio.sleep(self.poll_interval)
+
+                for emoji, status in [("\u2705", "approved"), ("\u274c", "denied")]:
+                    emoji_encoded = urllib.parse.quote(emoji)
+                    react_url = f"{api}/channels/{self.channel_id}/messages/{message_id}/reactions/{emoji_encoded}"
+                    async with session.get(react_url, headers=headers) as resp:
+                        if resp.status != 200:
+                            continue
+                        reactors = await resp.json()
+                        for reactor in reactors:
+                            if reactor.get("bot"):
+                                continue
+                            reactor_id = str(reactor["id"])
+                            if not self.approvers or reactor_id in self.approvers:
+                                logger.info(f"HITL {hitl_id}: {status} by {reactor_id}")
+                                result_icon = "Approved" if status == "approved" else "Denied"
+                                await session.post(
+                                    f"{api}/channels/{self.channel_id}/messages",
+                                    headers=headers,
+                                    json={"content": f"{result_icon}: `{tool_name}` {status} by <@{reactor_id}>"},
+                                )
+                                return {"status": status, "approver": reactor_id, "hitl_id": hitl_id}
 
 
 def _redact_for_display(args: dict) -> str:

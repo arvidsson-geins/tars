@@ -133,6 +133,28 @@ class Storage:
         )
         await self._db.commit()
 
+    async def prune_stale_sessions(self, max_age_days: int = 30) -> int:
+        """Delete sessions (and their messages/tool logs) older than max_age_days.
+
+        Returns the number of sessions pruned.
+        """
+        cutoff = time.time() - (max_age_days * 86400)
+        async with self._db.execute(
+            "SELECT id FROM sessions WHERE last_active < ?", (cutoff,)
+        ) as cursor:
+            stale = [row[0] for row in await cursor.fetchall()]
+
+        if not stale:
+            return 0
+
+        placeholders = ",".join("?" * len(stale))
+        await self._db.execute(f"DELETE FROM messages WHERE session_id IN ({placeholders})", stale)
+        await self._db.execute(f"DELETE FROM tool_log WHERE session_id IN ({placeholders})", stale)
+        await self._db.execute(f"DELETE FROM sessions WHERE id IN ({placeholders})", stale)
+        await self._db.commit()
+        logger.info(f"Pruned {len(stale)} stale sessions (older than {max_age_days} days)")
+        return len(stale)
+
     # --- Messages ---
 
     async def save_message(
