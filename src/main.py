@@ -185,6 +185,17 @@ async def main() -> None:
     storage = Storage(db_path=f"{data_dir}/tars.db")
     await storage.init()
 
+    # Prune stale sessions on startup (keeps DB bounded across long-running installs).
+    # Configurable via tars.session_retention_days, default 30. Set to 0 to disable.
+    retention_days = config.get("tars", {}).get("session_retention_days", 30)
+    if retention_days > 0:
+        try:
+            pruned = await storage.prune_stale_sessions(max_age_days=retention_days)
+            if pruned:
+                logger.info(f"Startup prune: removed {pruned} sessions older than {retention_days}d")
+        except Exception as e:
+            logger.error(f"Startup prune failed: {e}")
+
     # --- Auto-discover modules ---
     registry = Registry()
     registry.discover()

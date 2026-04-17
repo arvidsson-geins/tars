@@ -3,6 +3,12 @@
 Logs all tool executions, HITL events, rate limit hits, content safety alerts,
 and auth events. Secrets are redacted. File is line-buffered, never truncated
 by the application. Rotate with standard logrotate if needed.
+
+Uses threading.Lock (not asyncio.Lock) because this is called from both async
+(core agent manager) and sync (MCP server subprocess) contexts, and file I/O
+via built-in open() is blocking. threading.Lock is safe in both, whereas
+asyncio.Lock would break sync callers. Writes are fast (line-buffered append)
+so loop blocking is negligible in practice.
 """
 
 import atexit

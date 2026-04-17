@@ -156,16 +156,16 @@ class AccessControl:
             sender_agent_tier = self.get_sender_agent_tier(user_id)
             if not sender_agent_tier:
                 logger.info(
-                    f"Access denied: unknown bot {user_id} → agent {agent_id} "
-                    f"(target_tier={target_tier})"
+                    f"Access denied: sender={user_id} sender_tier=unknown-bot "
+                    f"→ target={agent_id} target_tier={target_tier}"
                 )
                 return False
             allowed_targets = _AGENT_MESSAGE_RULES.get(sender_agent_tier, set())
             allowed = target_tier in allowed_targets
             if not allowed:
                 logger.info(
-                    f"Access denied: agent {user_id} (tier={sender_agent_tier}) "
-                    f"→ agent {agent_id} (tier={target_tier})"
+                    f"Access denied: sender={user_id} sender_tier={sender_agent_tier} "
+                    f"→ target={agent_id} target_tier={target_tier}"
                 )
             return allowed
 
@@ -175,8 +175,8 @@ class AccessControl:
         allowed = target_tier in allowed_targets
         if not allowed:
             logger.info(
-                f"Access denied: user {user_id} (tier={sender_tier}) "
-                f"→ agent {agent_id} (tier={target_tier})"
+                f"Access denied: sender={user_id} sender_tier={sender_tier} "
+                f"→ target={agent_id} target_tier={target_tier}"
             )
         return allowed
 
