@@ -34,7 +34,8 @@ def _check_claude_cli() -> tuple[bool, str]:
     """Verify Claude Code CLI is installed."""
     if _find_claude_bin():
         return True, "Claude CLI found"
-    return False, "Claude CLI not found — install with: npm install -g @anthropic-ai/claude-code"
+    return False, ("Claude CLI not found — install with: "
+                   "curl -fsSL https://claude.ai/install.sh | sh")
 
 
 async def _check_claude_auth() -> tuple[bool, str]:
