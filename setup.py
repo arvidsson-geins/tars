@@ -310,7 +310,17 @@ def step_hooks(state: dict):
 
 
 def step_modules(state: dict):
-    header("Step 4: Tools & Skills")
+    header("Step 4: Deployment Pattern & Extension Modules")
+
+    info("T.A.R.S supports two deployment patterns:")
+    print()
+    print(f"  {BOLD}[1] 2-layer{RESET} — Core + Overlay  (single deployment, recommended)")
+    info("      All tools/skills live in Core. Overlay holds your config, agents, data.")
+    print()
+    print(f"  {BOLD}[2] 3-layer{RESET} — Core + Extension Modules + Overlay")
+    info("      Use when one extension module set feeds multiple overlays")
+    info("      (e.g. shared domain tools across staging/prod or client installs).")
+    print()
 
     # Show core tools
     print(f"  {BOLD}Core tools (always included):{RESET}")
@@ -332,12 +342,25 @@ def step_modules(state: dict):
         for s in core_skills:
             print(f"    {GREEN}✓{RESET} {s}")
 
-    # Scan for Layer 2 modules
+    # Scan for Layer 2 modules up front so we can default the pattern intelligently
     oths_root = None
     for candidate in [PROJECT_ROOT.parent / "tars-oths", PROJECT_ROOT.parent / "oths"]:
         if candidate.is_dir():
             oths_root = candidate
             break
+
+    # Default to 2-layer unless extension modules are present on disk
+    default_pattern = "2" if oths_root is None else "3"
+    print()
+    pattern = ask(f"Deployment pattern [1=2-layer, 2=3-layer]", default_pattern)
+    state["deployment_pattern"] = "2-layer" if pattern.strip() in ("1", "2-layer") else "3-layer"
+
+    if state["deployment_pattern"] == "2-layer":
+        print()
+        ok("2-layer deployment: Core + Overlay only")
+        state["tars_oths"] = ""
+        state["selected_modules"] = []
+        return
 
     if not oths_root:
         print()
@@ -349,7 +372,8 @@ def step_modules(state: dict):
 
     if not oths_root or not oths_root.is_dir():
         print()
-        ok("No extension modules (core tools only)")
+        warn("3-layer selected but no extension module directory found — falling back to 2-layer")
+        state["deployment_pattern"] = "2-layer"
         state["tars_oths"] = ""
         state["selected_modules"] = []
         return
@@ -1032,7 +1056,12 @@ def step_systemd(state: dict):
             if not f.is_file():
                 continue
 
-            content = re.sub(r"/opt/tars(?=/|$)", str(PROJECT_ROOT), f.read_text())
+            # Templates use @TARS_HOME@ as placeholder for the install path.
+            # Fall back to the legacy /opt/tars path regex for any template
+            # that hasn't been migrated yet (harmless on modern templates).
+            raw = f.read_text()
+            content = raw.replace("@TARS_HOME@", str(PROJECT_ROOT))
+            content = re.sub(r"/opt/tars(?=/|$)", str(PROJECT_ROOT), content)
 
             # Inject TARS_OVERLAY into service files (after TARS_HOME line)
             if f.name.endswith(".service"):
@@ -1063,7 +1092,8 @@ def step_systemd(state: dict):
 
         service = template_path.read_text()
 
-        # Substitute paths (word-boundary aware to avoid matching /opt/tars-overlay)
+        # Templates use @TARS_HOME@; legacy /opt/tars regex kept as fallback.
+        service = service.replace("@TARS_HOME@", str(PROJECT_ROOT))
         service = re.sub(r"/opt/tars(?=/|$)", str(PROJECT_ROOT), service)
         service = service.replace(
             "ExecStart=/usr/local/bin/uv",

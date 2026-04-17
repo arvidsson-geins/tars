@@ -11,6 +11,7 @@ import shutil
 from pathlib import Path
 
 from src.core.base import PROJECT_ROOT
+from src.core.config_schema import validate_config
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,18 @@ async def run_preflight(config: dict, vault, storage_path: str) -> bool:
     passed = 0
     failed = 0
     warnings = 0
+
+    # --- Config schema validation (typo detection + required keys) ---
+    schema_errors, schema_warnings = validate_config(config)
+    for e in schema_errors:
+        logger.error(f"  ✗ config_schema: {e}")
+        failed += 1
+    for w in schema_warnings:
+        logger.warning(f"  ⚠ config_schema: {w}")
+        warnings += 1
+    if not schema_errors and not schema_warnings:
+        logger.info("  ✓ config_schema: OK")
+        passed += 1
 
     # --- Critical checks ---
     checks: list[tuple[str, tuple[bool, str]]] = []

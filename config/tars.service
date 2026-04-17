@@ -9,7 +9,7 @@ Wants=network-online.target
 Type=simple
 User=tars
 Group=tars
-WorkingDirectory=/opt/tars
+WorkingDirectory=@TARS_HOME@
 ExecStart=/usr/local/bin/uv run --no-sync python -m src.main
 Restart=always
 RestartSec=10
@@ -35,8 +35,8 @@ SystemCallFilter=~@mount @reboot @swap @debug @obsolete @cpu-emulation @raw-io
 CapabilityBoundingSet=
 LockPersonality=true
 RemoveIPC=true
-ReadWritePaths=/opt/tars/data /opt/tars/agents /opt/tars/config /tmp %h/.cache %h/.claude
-ReadOnlyPaths=/opt/tars
+ReadWritePaths=@TARS_HOME@/data @TARS_HOME@/agents @TARS_HOME@/config /tmp %h/.cache %h/.claude
+ReadOnlyPaths=@TARS_HOME@
 
 # Logging
 StandardOutput=journal

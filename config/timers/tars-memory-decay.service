@@ -3,9 +3,9 @@ Description=T.A.R.S Memory Context Regen + Decay
 After=tars.service
 
 [Service]
-Environment=TARS_HOME=/opt/tars
+Environment=TARS_HOME=@TARS_HOME@
 Type=oneshot
 User=tars
 Group=tars
-WorkingDirectory=/opt/tars
-ExecStart=/opt/tars/scripts/memory-decay.sh
+WorkingDirectory=@TARS_HOME@
+ExecStart=@TARS_HOME@/scripts/memory-decay.sh

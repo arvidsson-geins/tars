@@ -3,11 +3,11 @@ Description=T.A.R.S Health Audit
 After=tars.service
 
 [Service]
-Environment=TARS_HOME=/opt/tars
+Environment=TARS_HOME=@TARS_HOME@
 Type=oneshot
 User=tars
 Group=tars
-WorkingDirectory=/opt/tars
-ExecStart=/opt/tars/scripts/health-audit.sh --report
+WorkingDirectory=@TARS_HOME@
+ExecStart=@TARS_HOME@/scripts/health-audit.sh --report
 StandardOutput=append:/var/log/tars-security.log
 StandardError=append:/var/log/tars-security.log
