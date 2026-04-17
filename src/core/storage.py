@@ -52,6 +52,14 @@ CREATE TABLE IF NOT EXISTS tool_log (
     created_at REAL DEFAULT (unixepoch())
 );
 CREATE INDEX IF NOT EXISTS idx_tool_log_agent ON tool_log(agent_id, created_at);
+
+CREATE TABLE IF NOT EXISTS agent_overrides (
+    agent_id TEXT NOT NULL,
+    setting  TEXT NOT NULL,
+    value    TEXT NOT NULL,
+    updated_at REAL DEFAULT (unixepoch()),
+    PRIMARY KEY (agent_id, setting)
+);
 """
 
 
@@ -154,6 +162,43 @@ class Storage:
         await self._db.commit()
         logger.info(f"Pruned {len(stale)} stale sessions (older than {max_age_days} days)")
         return len(stale)
+
+    # --- Agent overrides (durable per-agent runtime settings) ---
+
+    async def get_agent_override(self, agent_id: str, setting: str) -> str | None:
+        """Return the persisted override for (agent_id, setting), or None."""
+        async with self._db.execute(
+            "SELECT value FROM agent_overrides WHERE agent_id = ? AND setting = ?",
+            (agent_id, setting),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return row[0] if row else None
+
+    async def set_agent_override(self, agent_id: str, setting: str, value: str | None) -> None:
+        """Set or clear a persisted override. value=None removes the row."""
+        if value is None:
+            await self._db.execute(
+                "DELETE FROM agent_overrides WHERE agent_id = ? AND setting = ?",
+                (agent_id, setting),
+            )
+        else:
+            await self._db.execute(
+                "INSERT INTO agent_overrides (agent_id, setting, value, updated_at) "
+                "VALUES (?, ?, ?, unixepoch()) "
+                "ON CONFLICT(agent_id, setting) DO UPDATE SET "
+                "value = excluded.value, updated_at = excluded.updated_at",
+                (agent_id, setting, value),
+            )
+        await self._db.commit()
+
+    async def get_agent_overrides(self, agent_id: str) -> dict[str, str]:
+        """Return all overrides for an agent as {setting: value}."""
+        async with self._db.execute(
+            "SELECT setting, value FROM agent_overrides WHERE agent_id = ?",
+            (agent_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return {row[0]: row[1] for row in rows}
 
     # --- Messages ---
 
