@@ -527,6 +527,7 @@ class AgentManager:
                         allowed_tools=allowed_tools,
                         disallowed_tools=disallowed_tools,
                         mcp_config=mcp_config,
+                        agent_id=agent_id,
                         proc_callback=lambda p: self._running_procs.__setitem__(agent_id, p),
                     )
                 except Exception as e:
@@ -651,6 +652,7 @@ class AgentManager:
                     effort=llm_effort,
                     session_id=session.cli_session_id,
                     mcp_config=mcp_config,
+                    agent_id=agent_id,
                 )
             except Exception as e:
                 logger.error(f"Internal LLM error for {agent_id}: {e}", exc_info=True)
@@ -911,6 +913,7 @@ class AgentManager:
                 [Message(role=MessageRole.USER, content=summary_prompt)],
                 project_dir=self._get_project_dir(agent_id),
                 model="haiku",  # cheap and fast for summaries
+                agent_id=agent_id,
             )
 
             if response.content and response.stop_reason != "error":

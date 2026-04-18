@@ -60,6 +60,8 @@ class ClaudeCodeProvider(LLMProvider):
         allowed_tools = kwargs.get("allowed_tools")
         disallowed_tools = kwargs.get("disallowed_tools")
         effort = kwargs.get("effort")
+        agent_id = kwargs.get("agent_id")
+        tag = f"[{agent_id}] " if agent_id else ""
 
         # Build the prompt from messages
         resuming = session_id is not None
@@ -105,7 +107,7 @@ class ClaudeCodeProvider(LLMProvider):
         if not cwd.exists():
             cwd.mkdir(parents=True, exist_ok=True)
 
-        logger.debug(f"Claude Code: cwd={cwd} model={resolved_model} prompt_len={len(prompt)}")
+        logger.debug(f"{tag}Claude Code: cwd={cwd} model={resolved_model} prompt_len={len(prompt)}")
 
         was_resuming = "--resume" in args
         max_attempts = 4  # refresh+resume, resume-dropped fresh, backoff retry, give up
@@ -160,7 +162,7 @@ class ClaudeCodeProvider(LLMProvider):
                         args = [a for i, a in enumerate(args)
                                 if i != resume_idx and i != resume_idx + 1]
                         logger.warning(
-                            f"Dead CLI session {dead_id} — dropping --resume, starting fresh"
+                            f"{tag}Dead CLI session {dead_id} — dropping --resume, starting fresh"
                         )
                         continue
 
@@ -168,7 +170,7 @@ class ClaudeCodeProvider(LLMProvider):
                         # Stage 1: Force token refresh on first auth error
                         if not refreshed_token:
                             logger.warning(
-                                f"Auth error (attempt {attempt}/{max_attempts}) — "
+                                f"{tag}Auth error (attempt {attempt}/{max_attempts}) — "
                                 f"forcing token refresh, retrying..."
                             )
                             await self._force_token_refresh()
@@ -182,7 +184,7 @@ class ClaudeCodeProvider(LLMProvider):
                             args = [a for i, a in enumerate(args)
                                     if i != resume_idx and i != resume_idx + 1]
                             logger.warning(
-                                f"Auth error persists after token refresh — "
+                                f"{tag}Auth error persists after token refresh — "
                                 f"dropping stale session {stale_id}, retrying fresh"
                             )
                             continue
@@ -190,7 +192,7 @@ class ClaudeCodeProvider(LLMProvider):
                         # Stage 3: No resume involved — genuine auth error, backoff and retry
                         if attempt < max_attempts:
                             logger.warning(
-                                f"Claude auth error (attempt {attempt}/{max_attempts}) — "
+                                f"{tag}Claude auth error (attempt {attempt}/{max_attempts}) — "
                                 f"retrying in 5s..."
                             )
                             await asyncio.sleep(5)
@@ -198,7 +200,7 @@ class ClaudeCodeProvider(LLMProvider):
 
                         # Stage 4: All retries exhausted
                         logger.critical(
-                            "Claude auth failed after all retries — token may be expired. "
+                            f"{tag}Claude auth failed after all retries — token may be expired. "
                             "Fix: run 'claude setup-token' as the tars user, then restart."
                         )
                         return LLMResponse(
@@ -208,7 +210,7 @@ class ClaudeCodeProvider(LLMProvider):
 
                     # Non-auth CLI error — retry with backoff
                     logger.error(
-                        f"Claude Code failed (attempt {attempt}/{max_attempts}, "
+                        f"{tag}Claude Code failed (attempt {attempt}/{max_attempts}, "
                         f"exit={proc.returncode}): {error_msg}"
                         + (f" | stdout: {stdout_text[:300]}" if stdout_text and not error_detail else "")
                     )
@@ -225,12 +227,12 @@ class ClaudeCodeProvider(LLMProvider):
 
                 # If we dropped --resume to recover, log the transition
                 if was_resuming and "--resume" not in args:
-                    logger.info("Recovered from stale session — new session started")
+                    logger.info(f"{tag}Recovered from stale session — new session started")
 
                 return response
 
             except FileNotFoundError:
-                logger.error(f"Claude Code CLI not found at '{self._claude_bin}'")
+                logger.error(f"{tag}Claude Code CLI not found at '{self._claude_bin}'")
                 return LLMResponse(
                     content="I can't start up right now — there's a system issue. Let Peter know.",
                     stop_reason="error",
@@ -239,7 +241,7 @@ class ClaudeCodeProvider(LLMProvider):
                 if proc:
                     proc.kill()
                 logger.error(
-                    f"Claude Code timed out (attempt {attempt}/{max_attempts}) "
+                    f"{tag}Claude Code timed out (attempt {attempt}/{max_attempts}) "
                     f"after {kwargs.get('timeout', self._timeout)}s"
                 )
                 if attempt < max_attempts:
