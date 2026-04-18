@@ -63,6 +63,20 @@ class ClaudeCodeProvider(LLMProvider):
         agent_id = kwargs.get("agent_id")
         tag = f"[{agent_id}] " if agent_id else ""
 
+        # Resolve cwd up-front so we can probe the session file before building the prompt
+        cwd = Path(project_dir).resolve()
+        if not cwd.exists():
+            cwd.mkdir(parents=True, exist_ok=True)
+
+        # Pre-flight probe: if the CLI has no local state for this session, skip --resume.
+        # Stale session_ids that still exist in storage but not on disk cause silent hangs
+        # when the CLI tries to resume them.
+        if session_id and not self._session_file_exists(cwd, session_id):
+            logger.info(
+                f"{tag}Session file missing for {session_id} — starting fresh"
+            )
+            session_id = None
+
         # Build the prompt from messages
         resuming = session_id is not None
         prompt = self._build_prompt(messages, resuming=resuming)
@@ -102,11 +116,6 @@ class ClaudeCodeProvider(LLMProvider):
         if disallowed_tools:
             args.extend(["--disallowedTools"] + disallowed_tools)
 
-        # Run in the agent's project directory
-        cwd = Path(project_dir).resolve()
-        if not cwd.exists():
-            cwd.mkdir(parents=True, exist_ok=True)
-
         logger.debug(f"{tag}Claude Code: cwd={cwd} model={resolved_model} prompt_len={len(prompt)}")
 
         was_resuming = "--resume" in args
@@ -130,7 +139,11 @@ class ClaudeCodeProvider(LLMProvider):
                 if proc_callback:
                     proc_callback(proc)
 
+                # Cap resume attempts at 5 min to catch hang-on-stale-resume quickly.
+                # Fresh sessions get the full timeout for legitimate long-running calls.
                 timeout = kwargs.get("timeout", self._timeout)
+                if "--resume" in args:
+                    timeout = min(timeout, 300)
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(input=prompt.encode()),
                     timeout=timeout,
@@ -242,14 +255,37 @@ class ClaudeCodeProvider(LLMProvider):
                     proc.kill()
                 logger.error(
                     f"{tag}Claude Code timed out (attempt {attempt}/{max_attempts}) "
-                    f"after {kwargs.get('timeout', self._timeout)}s"
+                    f"after {timeout}s"
                 )
+                # Hang on --resume is the usual cause. Drop the stale session and retry
+                # fresh rather than looping on the same doomed args.
+                if "--resume" in args:
+                    resume_idx = args.index("--resume")
+                    hung_id = args[resume_idx + 1] if resume_idx + 1 < len(args) else "unknown"
+                    args = [a for i, a in enumerate(args)
+                            if i != resume_idx and i != resume_idx + 1]
+                    logger.warning(
+                        f"{tag}Session --resume {hung_id} hung — dropping, retrying fresh"
+                    )
+                    continue
                 if attempt < max_attempts:
                     continue
                 return LLMResponse(
                     content="That took too long and I had to stop. Try a shorter question, or break it into parts.",
                     stop_reason="timeout",
                 )
+
+    def _session_file_exists(self, cwd: Path, session_id: str) -> bool:
+        """Check whether Claude CLI has local state for this session.
+
+        Claude Code stores sessions at
+        ``$CLAUDE_CONFIG_DIR/projects/<cwd-slugged>/<session_id>.jsonl`` where the
+        slug is the cwd with ``/`` replaced by ``-``. Missing file → nothing to
+        resume, so we skip ``--resume`` to avoid silent hangs.
+        """
+        config_dir = os.environ.get("CLAUDE_CONFIG_DIR") or str(Path.home() / ".claude")
+        slug = str(cwd).replace("/", "-")
+        return (Path(config_dir) / "projects" / slug / f"{session_id}.jsonl").exists()
 
     async def _force_token_refresh(self) -> None:
         """Force the CLI to refresh its OAuth access token.
