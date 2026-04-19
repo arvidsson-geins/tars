@@ -276,7 +276,9 @@ class AgentManager:
             return
 
         # --- Layer 1: Can this sender talk to this agent? ---
-        if self.access_control:
+        # Scheduler-originated messages bypass access control
+        is_scheduled = message.user_id == "scheduler"
+        if self.access_control and not is_scheduled:
             is_bot = bool(
                 message.raw
                 and hasattr(message.raw, "author")
