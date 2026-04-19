@@ -139,11 +139,13 @@ class ClaudeCodeProvider(LLMProvider):
                 if proc_callback:
                     proc_callback(proc)
 
-                # Cap resume attempts at 5 min to catch hang-on-stale-resume quickly.
-                # Fresh sessions get the full timeout for legitimate long-running calls.
+                # Cap resume attempts at 10 min to catch hang-on-stale-resume without
+                # killing legitimate long-running turns. Opus high-effort with several
+                # tool calls can exceed 5 min of wall-clock. Fresh sessions keep the
+                # full configured timeout.
                 timeout = kwargs.get("timeout", self._timeout)
                 if "--resume" in args:
-                    timeout = min(timeout, 300)
+                    timeout = min(timeout, 600)
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(input=prompt.encode()),
                     timeout=timeout,
@@ -174,6 +176,7 @@ class ClaudeCodeProvider(LLMProvider):
                         dead_id = args[resume_idx + 1] if resume_idx + 1 < len(args) else "unknown"
                         args = [a for i, a in enumerate(args)
                                 if i != resume_idx and i != resume_idx + 1]
+                        prompt = self._build_prompt(messages, resuming=False)
                         logger.warning(
                             f"{tag}Dead CLI session {dead_id} — dropping --resume, starting fresh"
                         )
@@ -196,6 +199,7 @@ class ClaudeCodeProvider(LLMProvider):
                             stale_id = args[resume_idx + 1] if resume_idx + 1 < len(args) else "unknown"
                             args = [a for i, a in enumerate(args)
                                     if i != resume_idx and i != resume_idx + 1]
+                            prompt = self._build_prompt(messages, resuming=False)
                             logger.warning(
                                 f"{tag}Auth error persists after token refresh — "
                                 f"dropping stale session {stale_id}, retrying fresh"
@@ -258,14 +262,18 @@ class ClaudeCodeProvider(LLMProvider):
                     f"after {timeout}s"
                 )
                 # Hang on --resume is the usual cause. Drop the stale session and retry
-                # fresh rather than looping on the same doomed args.
+                # fresh rather than looping on the same doomed args. Rebuild the prompt
+                # with resuming=False so SQLite history is injected into the fresh session
+                # — otherwise the transcript is lost every time --resume hangs.
                 if "--resume" in args:
                     resume_idx = args.index("--resume")
                     hung_id = args[resume_idx + 1] if resume_idx + 1 < len(args) else "unknown"
                     args = [a for i, a in enumerate(args)
                             if i != resume_idx and i != resume_idx + 1]
+                    prompt = self._build_prompt(messages, resuming=False)
                     logger.warning(
-                        f"{tag}Session --resume {hung_id} hung — dropping, retrying fresh"
+                        f"{tag}Session --resume {hung_id} hung — dropping, retrying fresh "
+                        f"with history replay"
                     )
                     continue
                 if attempt < max_attempts:

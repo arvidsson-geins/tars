@@ -399,25 +399,22 @@ class AgentManager:
                 logger.debug(f"Restored CLI session {session.cli_session_id} from storage")
 
         # --- Build message context ---
-        # If we have a CLI session, Claude Code has the history — just send the new message.
-        # If not, load recent history from SQLite as fallback context.
+        # Always load SQLite history into `messages`. When the CLI resume succeeds,
+        # claude_code.py's _build_prompt(resuming=True) discards it and sends only the
+        # latest user message. When --resume is dropped (stale/hung/auth), the provider
+        # rebuilds the prompt with resuming=False and the history is what preserves
+        # transcript continuity across the fallback.
         system_prompt = self._build_system_prompt(agent_id)
         messages = []
         if system_prompt:
             messages.append(Message(role=MessageRole.SYSTEM, content=system_prompt))
 
-        if not session.cli_session_id and self.storage:
-            # No CLI session — load history from SQLite as context
-            # Prefer summary + last few messages over dumping everything
-            stored = await self.storage.get_or_create_session(
-                session.id, agent_id, message.channel_id, message.user_id
-            )
+        if self.storage:
             if stored.get("summary"):
                 messages.append(Message(
                     role=MessageRole.SYSTEM,
                     content=f"[Conversation summary]: {stored['summary']}"
                 ))
-                # Only load last 5 messages after summary
                 history = await self.storage.load_history(session.id, 5)
             else:
                 history = await self.storage.load_history(session.id, self._max_history)
