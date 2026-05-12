@@ -17,6 +17,30 @@ logger = logging.getLogger(__name__)
 _BOT_LOOP_WINDOW = 60       # seconds to track interactions
 _BOT_LOOP_MAX_HITS = 5      # max bot-to-bot responses in window before suppressing
 
+# Channel-level access control. Enforced at the connector layer because
+# prompt-level rules (CLAUDE.md, memory) are unreliable: the LLM will
+# rationalize meta-replies and acknowledgements.
+#
+#   channel_id -> None              : hard deny (no agent may read/write)
+#   channel_id -> frozenset({...})  : allowlist (only listed agents)
+#   channel not in map              : unrestricted
+_CHANNEL_ACCESS: dict[str, frozenset[str] | None] = {
+    "1479948821814317066": None,                    # #general — denied for all
+    "1500858720542920714": frozenset({"nest"}),     # #house-hunting — nest only
+}
+
+
+def _agent_allowed_in_channel(channel_id: str, agent_id: str | None) -> bool:
+    """Return True if the agent may read/write this channel."""
+    if channel_id not in _CHANNEL_ACCESS:
+        return True
+    allowed = _CHANNEL_ACCESS[channel_id]
+    if allowed is None:
+        return False
+    if agent_id is None:
+        return False
+    return agent_id in allowed
+
 
 class DiscordConnector(Connector):
     """Multi-bot Discord connector with slash command support.
@@ -107,6 +131,14 @@ class DiscordConnector(Connector):
         bot_account = kwargs.get("bot_account")
         reply_to = kwargs.get("reply_to")
         ephemeral = kwargs.get("ephemeral", False)
+        agent_id = kwargs.get("agent_id")
+
+        if not _agent_allowed_in_channel(str(channel_id), agent_id):
+            logger.warning(
+                f"Suppressing send to {channel_id} from agent {agent_id!r}: "
+                f"channel restricted ({content[:80]!r})"
+            )
+            return None
 
         bot = self._get_bot(bot_account)
         if not bot:
@@ -367,6 +399,13 @@ class DiscordBot:
         if message.author == self.client.user:
             return
 
+        # Hard deny — channels mapped to None block every agent. Drop early so
+        # we don't even resolve routing or dedup. Allowlist channels are
+        # checked after agent resolution below.
+        channel_id = str(message.channel.id)
+        if channel_id in _CHANNEL_ACCESS and _CHANNEL_ACCESS[channel_id] is None:
+            return
+
         # Dedup: skip messages already seen (replayed after Discord RESUME)
         if message.id in self._seen_message_ids:
             return
@@ -425,6 +464,15 @@ class DiscordBot:
         )
 
         if not agent_id:
+            return
+
+        # Per-agent channel restriction — drop silently if this agent isn't
+        # on the channel's allowlist.
+        if not _agent_allowed_in_channel(channel_id, agent_id):
+            logger.debug(
+                f"[{self.account_name}] Skipping {channel_id}: "
+                f"agent {agent_id!r} not on channel allowlist"
+            )
             return
 
         # Check mentions-only routing

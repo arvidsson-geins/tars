@@ -58,6 +58,26 @@ agents:
   #       categories: ["ADMIN_CATEGORY_ID"]
   #       mentions: false
 
+  # Example: agent with scheduled tasks (proactive, not just reactive)
+  # scanner:
+  #   display_name: "Scanner"
+  #   description: "Scheduled data collector"
+  #   project_dir: ./agents/scanner
+  #   llm:
+  #     provider: claude_code
+  #     model: sonnet
+  #   tools: all
+  #   routing:
+  #     discord:
+  #       account: main
+  #       channels: ["CHANNEL_ID"]
+  #       mentions: false
+  #   schedule:                    # Cron-triggered prompts (local timezone)
+  #     - cron: "0 8 * * *"       # 5-field cron: min hour dom month dow
+  #       prompt: "Check for new data and post a summary"
+  #       channel: "DISCORD_CHANNEL_ID"   # Where to post the output
+  #       bot: main                       # Which bot account to use
+
   # Example: privileged ops agent (keeps built-in tools for sysadmin work)
   # ops:
   #   display_name: "Ops Bot"

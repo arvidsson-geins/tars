@@ -886,6 +886,37 @@ agents:
 
 ---
 
+## Agent Scheduler (cron-triggered prompts)
+
+Agents can run proactively on a schedule, not just reactively to messages. The built-in scheduler reads `schedule` entries from `agents.yaml` and fires agent sessions at the specified times.
+
+**Config:**
+```yaml
+agents:
+  scanner:
+    schedule:
+      - cron: "0 23 */2 * *"          # 5-field cron (local timezone)
+        prompt: "Scan for new data..."  # Prompt sent to the agent
+        channel: "DISCORD_CHANNEL_ID"   # Where the agent posts output
+        bot: main                       # Which Discord bot account to use
+      - cron: "0 21 * * *"
+        prompt: "Run daily cleanup..."
+        channel: "DISCORD_CHANNEL_ID"
+        bot: main
+```
+
+**How it works:**
+- Runs as an asyncio task alongside the Discord connector in the main process
+- Checks all jobs every 30 seconds against the current local time
+- When a cron expression matches, synthesizes an `IncomingMessage` with `user_id="scheduler"` and dispatches it through `handle_message`
+- Scheduler messages bypass access control (they originate from the system, not a user)
+- Each job fires at most once per minute (dedup by minute)
+- Output goes to the configured Discord channel via the normal connector flow
+
+**Cron format:** Standard 5-field: `minute hour day-of-month month day-of-week` (0 or 7 = Sunday). Supports `*`, `*/N`, `N-M`, comma-separated values.
+
+---
+
 ## Scheduled Tasks (systemd timers)
 
 All scheduled tasks use systemd timers (`Persistent=true` — catches up missed runs after reboot). Timer templates in `config/timers/`, installed automatically by `setup.py` via `scripts/install-systemd.sh`.

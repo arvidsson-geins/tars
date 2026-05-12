@@ -13,6 +13,7 @@ import yaml
 from src.core.registry import Registry
 from src.core.router import Router
 from src.core.agent_manager import AgentManager
+from src.core.scheduler import Scheduler
 from src.core.storage import Storage
 from src.core.skills import get_all_skills
 from src.core.preflight import run_preflight
@@ -349,6 +350,12 @@ async def main() -> None:
         f"T.A.R.S running — {len(active_connectors)} connector(s), "
         f"{len(agent_configs)} agent(s), {len(llm_providers)} LLM provider(s)"
     )
+
+    # --- Start scheduler ---
+    scheduler = Scheduler(agent_configs)
+    if scheduler.jobs:
+        asyncio.create_task(scheduler.start(agent_manager), name="scheduler")
+        logger.info(f"Scheduler: {len(scheduler.jobs)} job(s) loaded")
 
     # --- Start hot-reload watcher ---
     from src.core.digest import Digest

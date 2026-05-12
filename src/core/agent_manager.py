@@ -276,7 +276,9 @@ class AgentManager:
             return
 
         # --- Layer 1: Can this sender talk to this agent? ---
-        if self.access_control:
+        # Scheduler-originated messages bypass access control
+        is_scheduled = message.user_id == "scheduler"
+        if self.access_control and not is_scheduled:
             is_bot = bool(
                 message.raw
                 and hasattr(message.raw, "author")
@@ -384,7 +386,7 @@ class AgentManager:
             else:
                 await connector.send(
                     message.channel_id, f"Unknown skill: {message.skill}",
-                    ephemeral=True, raw=message.raw,
+                    ephemeral=True, raw=message.raw, agent_id=agent_id,
                 )
                 return
 
@@ -529,7 +531,7 @@ class AgentManager:
                     )
                 except Exception as e:
                     logger.error(f"LLM error for {agent_id}: {e}", exc_info=True)
-                    await connector.send(message.channel_id, f"Error: {e}")
+                    await connector.send(message.channel_id, f"Error: {e}", agent_id=agent_id)
                     return
                 finally:
                     self._running_procs.pop(agent_id, None)
@@ -578,7 +580,7 @@ class AgentManager:
         if response and response.content:
             await connector.send(
                 message.channel_id, response.content, reply_to=message.raw,
-                bot_account=message.bot_account,
+                bot_account=message.bot_account, agent_id=agent_id,
             )
             # Persist assistant response
             if self.storage:
@@ -801,7 +803,7 @@ class AgentManager:
                 memory=memory,
                 vault=self.vault,
                 registry=None,
-                connector_send=(lambda ch, content: connector.send(ch, content)) if connector else None,
+                connector_send=(lambda ch, content, _aid=agent_id: connector.send(ch, content, agent_id=_aid)) if connector else None,
                 agent_manager=self,
                 inter_agent_depth=getattr(message, '_inter_agent_depth', 0),
             )
