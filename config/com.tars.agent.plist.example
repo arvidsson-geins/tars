@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  T.A.R.S LaunchAgent template (macOS).
+
+  Generated copy lives at ~/Library/LaunchAgents/com.tars.agent.plist.
+  Use scripts/install-launchagent-macos.sh to substitute paths and load it.
+
+  Requires the vault passphrase to be in the login keychain so unlock is
+  non-interactive:
+      security add-generic-password -s tars-vault -a default -U
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tars.agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__UV_PATH__</string>
+        <string>run</string>
+        <string>--no-sync</string>
+        <string>python</string>
+        <string>-m</string>
+        <string>src.main</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__TARS_HOME__</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>__TARS_HOME__/data/launchd.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__TARS_HOME__/data/launchd.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>__PATH__</string>
+    </dict>
+</dict>
+</plist>
