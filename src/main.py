@@ -147,13 +147,24 @@ async def main() -> None:
     vault_path = vault_file if vault_file else Path("config/secrets.enc")
     vault = FernetVault(vault_path=str(vault_path))
     if vault_path.exists():
-        # Try key file first (for systemd), then interactive prompt
+        # Unlock sources, in priority order:
+        #   1. explicit key file (systemd-style deployments)
+        #   2. macOS Keychain (auto-unlock on dev/login-session machines)
+        #   3. piped stdin (non-interactive launches)
+        #   4. interactive prompt (operator at terminal)
+        passphrase: str | None = None
         key_file = resolve_vault_key_file()
         if key_file.exists():
-            passphrase = key_file.read_text().strip()
-        elif not sys.stdin.isatty():
-            passphrase = sys.stdin.readline().strip()
-        else:
+            passphrase = key_file.read_text().strip() or None
+        if not passphrase:
+            from src.vault.macos_keychain import get_passphrase as _kc_get
+            kc_passphrase = _kc_get()
+            if kc_passphrase:
+                logger.info("Vault passphrase resolved from macOS Keychain")
+                passphrase = kc_passphrase
+        if not passphrase and not sys.stdin.isatty():
+            passphrase = sys.stdin.readline().strip() or None
+        if not passphrase:
             import getpass
             passphrase = getpass.getpass("Vault passphrase: ")
         try:
