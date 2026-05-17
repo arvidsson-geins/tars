@@ -17,29 +17,11 @@ logger = logging.getLogger(__name__)
 _BOT_LOOP_WINDOW = 60       # seconds to track interactions
 _BOT_LOOP_MAX_HITS = 5      # max bot-to-bot responses in window before suppressing
 
-# Channel-level access control. Enforced at the connector layer because
-# prompt-level rules (CLAUDE.md, memory) are unreliable: the LLM will
-# rationalize meta-replies and acknowledgements.
-#
-#   channel_id -> None              : hard deny (no agent may read/write)
-#   channel_id -> frozenset({...})  : allowlist (only listed agents)
-#   channel not in map              : unrestricted
-_CHANNEL_ACCESS: dict[str, frozenset[str] | None] = {
-    "1479948821814317066": None,                    # #general — denied for all
-    "1500858720542920714": frozenset({"nest"}),     # #house-hunting — nest only
-}
-
-
-def _agent_allowed_in_channel(channel_id: str, agent_id: str | None) -> bool:
-    """Return True if the agent may read/write this channel."""
-    if channel_id not in _CHANNEL_ACCESS:
-        return True
-    allowed = _CHANNEL_ACCESS[channel_id]
-    if allowed is None:
-        return False
-    if agent_id is None:
-        return False
-    return agent_id in allowed
+# Channel ownership is enforced at the connector layer (not in prompts) because
+# prompt-level rules are unreliable — the LLM rationalizes meta-replies and
+# acknowledgements. An owned channel is exclusive to one agent: only the owner
+# reads and writes there, even on @-mention. Configure per agent in
+# config/agents.yaml under routing.discord.owned_channels.
 
 
 class DiscordConnector(Connector):
@@ -133,10 +115,11 @@ class DiscordConnector(Connector):
         ephemeral = kwargs.get("ephemeral", False)
         agent_id = kwargs.get("agent_id")
 
-        if not _agent_allowed_in_channel(str(channel_id), agent_id):
+        owner = self._channel_owner(str(channel_id))
+        if owner and agent_id and owner != agent_id:
             logger.warning(
                 f"Suppressing send to {channel_id} from agent {agent_id!r}: "
-                f"channel restricted ({content[:80]!r})"
+                f"channel owned by {owner!r} ({content[:80]!r})"
             )
             return None
 
@@ -285,6 +268,18 @@ class DiscordConnector(Connector):
         routing = agent_cfg.get("routing", {}).get("discord", {})
         return routing.get("account")
 
+    def _channel_owner(self, channel_id: str) -> str | None:
+        """Return the agent_id that owns this channel, or None if unowned.
+
+        Owned channels are exclusive: only the owner may read or write.
+        Sourced from each agent's routing.discord.owned_channels list.
+        """
+        for agent_id, agent_cfg in self._agent_configs.items():
+            owned = agent_cfg.get("routing", {}).get("discord", {}).get("owned_channels", [])
+            if channel_id in owned:
+                return agent_id
+        return None
+
     def get_agent_for_channel(self, channel_id: str, bot_account: str,
                               category_id: str | None = None) -> str | None:
         """Find which agent handles messages in this channel from this bot.
@@ -399,12 +394,7 @@ class DiscordBot:
         if message.author == self.client.user:
             return
 
-        # Hard deny — channels mapped to None block every agent. Drop early so
-        # we don't even resolve routing or dedup. Allowlist channels are
-        # checked after agent resolution below.
         channel_id = str(message.channel.id)
-        if channel_id in _CHANNEL_ACCESS and _CHANNEL_ACCESS[channel_id] is None:
-            return
 
         # Dedup: skip messages already seen (replayed after Discord RESUME)
         if message.id in self._seen_message_ids:
@@ -442,15 +432,22 @@ class DiscordBot:
                 f"— processing ({len(hits)}/{_BOT_LOOP_MAX_HITS})"
             )
 
-        # Check if this bot was mentioned (or it's a DM)
-        # Covers both @user mentions and @role mentions for the bot's managed role
+        # Check if this bot was mentioned (or it's a DM).
+        # Only count *explicit* mentions written in the message content
+        # (<@id> or <@!id>) or a role mention for the bot's role.
+        # Discord auto-attaches a "reply mention" when a user clicks Reply
+        # on a message; that lives in message.mentions but NOT in content,
+        # and we deliberately ignore it so mentions:true means "@me on purpose".
         is_dm = isinstance(message.channel, discord.DMChannel)
-        is_mentioned = self.client.user in message.mentions if self.client.user else False
-        if not is_mentioned and self.client.user:
-            # Check role mentions — Discord auto-creates a managed role for bots
-            bot_role_ids = {r.id for r in message.role_mentions}
-            if message.guild and self.client.user:
-                member = message.guild.get_member(self.client.user.id)
+        is_mentioned = False
+        if self.client.user:
+            bot_id = self.client.user.id
+            content_raw = message.content or ""
+            if f"<@{bot_id}>" in content_raw or f"<@!{bot_id}>" in content_raw:
+                is_mentioned = True
+            if not is_mentioned and message.guild:
+                bot_role_ids = {r.id for r in message.role_mentions}
+                member = message.guild.get_member(bot_id)
                 if member:
                     for role in member.roles:
                         if role.id in bot_role_ids:
@@ -466,21 +463,25 @@ class DiscordBot:
         if not agent_id:
             return
 
-        # Per-agent channel restriction — drop silently if this agent isn't
-        # on the channel's allowlist.
-        if not _agent_allowed_in_channel(channel_id, agent_id):
+        # Channel ownership — owned channels are exclusive to their owner.
+        # Drop silently if this channel is owned by a different agent.
+        owner = self.connector._channel_owner(channel_id)
+        if owner and owner != agent_id:
             logger.debug(
                 f"[{self.account_name}] Skipping {channel_id}: "
-                f"agent {agent_id!r} not on channel allowlist"
+                f"owned by {owner!r}, not {agent_id!r}"
             )
             return
 
-        # Check mentions-only routing
+        # Check mentions-only routing. Owned channels and DMs bypass the
+        # mention requirement — the owner replies to anything in its channel,
+        # and DMs are inherently direct.
         agent_cfg = self.connector._agent_configs.get(agent_id, {})
         routing = agent_cfg.get("routing", {}).get("discord", {})
         mentions_only = routing.get("mentions", False)
+        is_owner = owner == agent_id
 
-        if mentions_only and not is_mentioned and not is_dm:
+        if mentions_only and not is_mentioned and not is_dm and not is_owner:
             logger.debug(f"[{self.account_name}] Skipping — mentions_only and not mentioned")
             return
 
